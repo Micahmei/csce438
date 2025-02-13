@@ -37,7 +37,6 @@
 #include <google/protobuf/duration.pb.h>
 
 #include <fstream>
-#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -45,22 +44,14 @@
 #include <unistd.h>
 #include <google/protobuf/util/time_util.h>
 #include <grpc++/grpc++.h>
-#define GLOG_EXPORT
-#define GLOG_NO_EXPORT
-#include <glog/logging.h>
-#define log(severity, msg) \
-  LOG(severity) << msg;    \
-  google::FlushLogFiles(google::severity);
+#include<glog/logging.h>
+#define log(severity, msg) LOG(severity) << msg; google::FlushLogFiles(google::severity); 
 
 #include "sns.grpc.pb.h"
 
-using csce438::ListReply;
-using csce438::Message;
-using csce438::Reply;
-using csce438::Request;
-using csce438::SNSService;
-using google::protobuf::Duration;
+
 using google::protobuf::Timestamp;
+using google::protobuf::Duration;
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
@@ -68,207 +59,160 @@ using grpc::ServerReader;
 using grpc::ServerReaderWriter;
 using grpc::ServerWriter;
 using grpc::Status;
+using csce438::Message;
+using csce438::ListReply;
+using csce438::Request;
+using csce438::Reply;
+using csce438::SNSService;
 
-std::time_t iso8601ToTimeT(const std::string &iso8601)
-{
-  std::tm tm = {};
-  std::istringstream ss(iso8601);
 
-  ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
-
-  if (ss.fail())
-  {
-    std::cerr << "Error: Failed to parse timestamp: " << iso8601 << std::endl;
-    return 0;
-  }
-
-  return timegm(&tm);
-}
-
-struct Client
-{
+struct Client {
   std::string username;
   bool connected = true;
   int following_file_size = 0;
-  std::vector<Client *> client_followers;
-  std::vector<Client *> client_following;
-  ServerReaderWriter<Message, Message> *stream = 0;
-  bool operator==(const Client &c1) const
-  {
+  std::vector<Client*> client_followers;
+  std::vector<Client*> client_following;
+  ServerReaderWriter<Message, Message>* stream = 0;
+  bool operator==(const Client& c1) const{
     return (username == c1.username);
   }
 };
 
-// Vector that stores every client that has been created
-std::vector<Client *> client_db;
+//Vector that stores every client that has been created
+std::vector<Client*> client_db;
 
-class SNSServiceImpl final : public SNSService::Service
-{
 
-  Status List(ServerContext *context, const Request *request, ListReply *list_reply) override
-  {
+class SNSServiceImpl final : public SNSService::Service {
+  
+  Status List(ServerContext* context, const Request* request, ListReply* list_reply) override {
     /*********
     YOUR CODE HERE
     **********/
-    std::string username = request->username();
-    for (const auto &client : client_db)
-    {
-      list_reply->add_all_users(client->username);
-    }
-
-    Client *current_user = nullptr;
-    for (const auto &client : client_db)
-    {
-      if (client->username == username)
-      {
-        current_user = client;
-        break;
+   //Get the username
+   std::string username = request->username();
+   for(const auto& client : client_db){
+    list_reply->add_user(client->username);
+   }
+   // add the user
+   Client *cur_user = nullptr;
+   for(auto& client : client_db){
+    if(client->username == username){
+      cur_user = client;
+      break;
       }
     }
-    for (const auto &follower : current_user->client_followers)
-    {
-      list_reply->add_followers(follower->username);
-    }
+    // add the followers
+    for(const auto& follower : cur_user->client_followers){
+      list_reply->add_follower(follower->username);
+    } 
+
 
     return Status::OK;
   }
 
-  std::unordered_map<std::string, std::unordered_map<std::string, std::time_t>> follow_time;
-
-  Status Follow(ServerContext *context, const Request *request, Reply *reply) override
-  {
+  Status Follow(ServerContext* context, const Request* request, Reply* reply) override {
 
     /*********
     YOUR CODE HERE
     **********/
-    std::string follower_name = request->username();   // 关注者
-    std::string followee_name = request->arguments(0); // 被关注者
-
+    std::string u1 = request->username();
+    std::string u2 = request->argements(0);
+   
     Client *follower = nullptr;
-    Client *followee = nullptr;
-
-    // 在客户端数据库 `client_db` 中查找关注者和被关注者
-    for (auto &client : client_db)
-    {
-      if (client->username == follower_name)
-      {
+    Client *followed = nullptr;
+    for(auto& client : client_db){
+      if(client->username == u1){
         follower = client;
       }
-      if (client->username == followee_name)
-      {
-        followee = client;
+      if(client->username == u2){
+        followed = client;
       }
     }
-
-    // 如果被关注的用户不存在，返回失败
-    if (followee == nullptr)
-    {
-      reply->set_msg("User does not exist.");
+    // if the followed is none
+    if(followed == nullptr){
+      reply->set_message("User not found");
       return Status::OK;
     }
-
-    for (const auto &following : follower->client_following)
-    {
-      if (following->username == followee_name)
-      {
-        reply->set_msg("Already following user.");
+    for(const auto &following : follower->client_following){
+      if(following->username == u2){
         return Status::OK;
       }
     }
 
-    // 更新关注关系
-    follower->client_following.push_back(followee);
-    followee->client_followers.push_back(follower); // 确保 `LIST` 命令可以正确返回粉丝
-
-    follow_time[follower_name][followee_name] = std::time(nullptr);
-
-    reply->set_msg("Followed successfully.");
-
-    return Status::OK;
+    // update the follower's following list
+    follower->client_following.push_back(followed);
+    // update the followed's follower list
+    followed->client_followers.push_back(follower);
+    follow_time[u1][u2] = std::time(nullptr);
+    reply->set_message("Followed successfully");
+    retuen Status::OK;
   }
-
-  Status UnFollow(ServerContext *context, const Request *request, Reply *reply) override
-  {
+  Status UnFollow(ServerContext* context, const Request* request, Reply* reply) override {
 
     /*********
     YOUR CODE HERE
     **********/
-    std::string username = request->username();
-    std::string unfollow_username = request->arguments(0);
-
+    std::string u1 = request->username();
+    std::string u2 = request->argements(0);
+   
     Client *user = nullptr;
     Client *unfollow_user = nullptr;
-
-    for (auto &client : client_db)
-    {
-      if (client->username == username)
-      {
+    for(auto& client : client_db){
+      if(client->username == u1){
         user = client;
       }
-      if (client->username == unfollow_username)
-      {
+      if(client->username == u2){
         unfollow_user = client;
       }
     }
-
-    if (!user || !unfollow_user)
-    {
-      reply->set_msg("User not found");
+    // if the followed is none
+    if(!user || !unfollow_user){
+      reply->set_message("User not found");
       return Status::OK;
     }
-
-    auto it = std::find(user->client_following.begin(), user->client_following.end(), unfollow_user);
-    if (it != user->client_following.end())
-    {
-      user->client_following.erase(it);
-      auto follower_it = std::find(unfollow_user->client_followers.begin(), unfollow_user->client_followers.end(), user);
-      if (follower_it != unfollow_user->client_followers.end())
-      {
-        unfollow_user->client_followers.erase(follower_it);
+    auto a = std::find(user->client_following.begin(), user->client_following.end(), unfollow_user);
+    if (a != user->client_following.end()){
+      user->client_following.erase(a);
+      auto follower_a = std::find(unfollow_user->client_followers.begin(), unfollow_user->client_followers.end(), user);
+      if (follower_a != unfollow_user->client_followers.end()){
+        unfollow_user->client_followers.erase(follower_a);
       }
-      reply->set_msg("Unfollow successful");
+      reply->set_message("Unfollowed successfully");
     }
-    else
-    {
-      reply->set_msg("Not following user");
+    else{
+      reply->set_message("Not following this user");
     }
-
     return Status::OK;
   }
 
   // RPC Login
-  Status Login(ServerContext *context, const Request *request, Reply *reply) override
-  {
+  Status Login(ServerContext* context, const Request* request, Reply* reply) override {
 
     /*********
     YOUR CODE HERE
     **********/
-    std::cout << "login request from [" << request->username() << "] ";
+   //print the info
+    std::cout<<"Login request received from client: ["<<request->username()<<"]";
     std::string username = request->username();
-    for (Client *c : client_db)
-    {
-      if (c->username == username)
-      {
-        std::cout << "User already exists" << std::endl;
-        reply->set_msg("User already exists");
+    for (Client *client : client_db){
+      if (client->username == username){
+        std::cout<<"User already exists"<<std::endl;
+        reply->set_message("User already exists");
         return Status::OK;
       }
     }
-
-    // if user does not exist in the client_db, add it into client_db
     Client *new_client = new Client();
     new_client->username = username;
     new_client->connected = true;
     client_db.push_back(new_client);
-
-    std::cout << "Login successful" << std::endl;
-    reply->set_msg("Login successful");
+    std::cout<<"Login successful"<<std::endl;
+    reply->set_message("Login successful");
+    
     return Status::OK;
   }
 
-  Status Timeline(ServerContext *context,
-                  ServerReaderWriter<Message, Message> *stream) override
-  {
+  Status Timeline(ServerContext* context, 
+		ServerReaderWriter<Message, Message>* stream) override {
 
     /*********
     YOUR CODE HERE
@@ -276,7 +220,7 @@ class SNSServiceImpl final : public SNSService::Service
     std::string username;
     Message msg;
 
-    // 读取客户端的初始消息，获取用户名
+    // get the client username
     if (stream->Read(&msg))
     {
       username = msg.username();
@@ -397,16 +341,15 @@ class SNSServiceImpl final : public SNSService::Service
       }
     }
 
-    // 退出 TIMELINE 模式
+    // exit the stream
     client->stream = nullptr;
-
     return Status::OK;
   }
+
 };
 
-void RunServer(std::string port_no)
-{
-  std::string server_address = "0.0.0.0:" + port_no;
+void RunServer(std::string port_no) {
+  std::string server_address = "0.0.0.0:"+port_no;
   SNSServiceImpl service;
 
   ServerBuilder builder;
@@ -414,29 +357,25 @@ void RunServer(std::string port_no)
   builder.RegisterService(&service);
   std::unique_ptr<Server> server(builder.BuildAndStart());
   std::cout << "Server listening on " << server_address << std::endl;
-  log(INFO, "Server listening on " + server_address);
+  log(INFO, "Server listening on "+server_address);
 
   server->Wait();
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char** argv) {
 
   std::string port = "3010";
-
+  
   int opt = 0;
-  while ((opt = getopt(argc, argv, "p:")) != -1)
-  {
-    switch (opt)
-    {
-    case 'p':
-      port = optarg;
-      break;
-    default:
-      std::cerr << "Invalid Command Line Argument\n";
+  while ((opt = getopt(argc, argv, "p:")) != -1){
+    switch(opt) {
+      case 'p':
+          port = optarg;break;
+      default:
+	  std::cerr << "Invalid Command Line Argument\n";
     }
   }
-
+  
   std::string log_file_name = std::string("server-") + port;
   google::InitGoogleLogging(log_file_name.c_str());
   log(INFO, "Logging Initialized. Server starting...");
