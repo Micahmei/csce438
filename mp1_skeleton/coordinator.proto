@@ -11,44 +11,39 @@ import "google/protobuf/timestamp.proto";
 service CoordService{
     rpc Heartbeat (ServerInfo) returns (Confirmation) {}
     rpc GetServer (ID) returns (ServerInfo) {}
-    // ZooKeeper API here
-    // Create a path and place data in the znode
-    rpc create (PathAndData) returns (Status) {}
-    // Check if a path exists (checking if a Master is elected
-    rpc exists (Path) returns (Status) {}
+
+    // 修改 Status 为 CoordStatus，避免 gRPC 命名冲突
+    rpc create (PathAndData) returns (CoordStatus) {}
+    rpc exists (Path) returns (CoordStatus) {}
 }
 
-//server info message definition
+// server info message definition
 message ServerInfo{
     int32 serverID = 1;
     string hostname = 2;
     string port = 3;
     string type = 4;
 }
-// TODO: check which extra stuff in the coordinator.proto you dont need
 
-//confirmation message definition
+// confirmation message definition
 message Confirmation{
     bool status = 1;
 }
 
-//id message definition
+// id message definition
 message ID{
     int32 id = 1;
 }
-
 
 // ServerList definition
 message ServerList{
     repeated string serverList = 1; 
 }
 
-
 // SynchService definition
 message SynchService{
     string test = 1;
 }
-
 
 // PathAndData definition for rpc create
 message PathAndData{
@@ -61,9 +56,7 @@ message Path{
     string path = 1;
 }
 
-// status definition for rpc exists and create
-message Status{
+// 修改 Status 为 CoordStatus
+message CoordStatus {
     bool status = 1;
 }
-
-
