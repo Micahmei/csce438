@@ -285,140 +285,71 @@ class SNSServiceImpl final : public SNSService::Service
     return Status::OK;
   }
 
-  Status Timeline(ServerContext *context,
-                  ServerReaderWriter<Message, Message> *stream) override
-  {
-
-    /*********
-    YOUR CODE HERE
-    **********/
-    std::string username;
-    Message msg;
-
-    // get username from the initial message
-    if (stream->Read(&msg))
-    {
-      username = msg.username();
-    }
-    else
-    {
-      return Status::CANCELLED;
-    }
-
-    std::string timeline_file = "./timelines/" + username + ".txt";
-
-    if (!std::filesystem::exists("./timelines"))
-    {
-      std::filesystem::create_directory("./timelines");
-    }
-
-    // get client of user
-    Client *client = nullptr;
-    for (Client *c : client_db)
-    {
-      if (c->username == username)
-      {
-        client = c;
-        break;
+  Status SNSServiceImpl::Timeline(ServerContext* context, ServerReaderWriter<Message, Message>* stream) override {
+      Message init_msg;
+      if (!stream->Read(&init_msg)) {
+          return Status::CANCELLED;
       }
-    }
-    if (!client)
-    {
-      return Status::CANCELLED;
-    }
 
-    // read the posts of the followings of the user
-    std::vector<Post> history_posts;
-    for (Client *followed_user : client->client_following)
-    {
-      std::string followed_timeline = "./timelines/" + followed_user->username + ".txt";
-      std::ifstream file(followed_timeline);
-      std::string line, post;
-      int count = 0;
+      std::string username = init_msg.username();
+      std::string timeline_file = "./timelines/" + username + ".txt";
 
-      while (std::getline(file, line))
-      {
-        if (line.empty() && !post.empty())
-        {
-          // parse post
-          std::istringstream post_stream(post);
-          std::string line, post_username, post_content;
-          std::time_t post_timestamp;
+      LOG(INFO) << "[Server] Client " << username << " entered Timeline mode.";
 
-          while (std::getline(post_stream, line))
-          {
-            if (line[0] == 'T')
-            {
-              post_timestamp = iso8601ToTimeT(line.substr(2));
-            }
-            else if (line[0] == 'U')
-            {
-              post_username = line.substr(2);
-            }
-            else if (line[0] == 'W')
-            {
-              post_content = line.substr(2);
-            }
+      if (!std::filesystem::exists("./timelines")) {
+          std::filesystem::create_directory("./timelines");
+      }
+
+      // 获取 `Client` 并存储 `stream`
+      Client* client = nullptr;
+      for (Client* c : client_db) {
+          if (c->username == username) {
+              client = c;
+              break;
+          }
+      }
+      if (!client) {
+          return Status::CANCELLED;
+      }
+      client->stream = stream;
+
+      // **发送最新 20 条 `Post`**
+      SendLatestPosts(stream, timeline_file);
+
+      // **启动 `MonitorTimeline` 线程**
+      std::thread monitor_thread([stream, timeline_file]() {
+          MonitorTimeline(stream, timeline_file);
+      });
+
+      // **监听 `Client` 发送的 `Post` 并写入 `Timeline` 文件**
+      Message client_msg;
+      while (stream->Read(&client_msg)) {
+          std::ofstream file(timeline_file, std::ios::app);
+          if (!file) {
+              LOG(ERROR) << "[Server] Failed to open timeline file: " << timeline_file;
+              return Status::CANCELLED;
           }
 
-          std::time_t follow_timestamp = follow_time[username][post_username];
-          if (post_timestamp >= follow_timestamp)
-          {
-            history_posts.push_back({post_username, post_content, post_timestamp});
+          std::string formatted_post = FormatPost(client_msg);
+          file << formatted_post;
+          file.close();
+
+          LOG(INFO) << "[Server] New post from " << client_msg.username() << ": " << client_msg.msg();
+
+          // **发送 `Post` 给 `Followers`**
+          for (Client* follower : client->client_followers) {
+              if (follower->stream) {
+                  follower->stream->Write(client_msg);
+              }
           }
-          post.clear();
-          count++;
-        }
-        else
-        {
-          post += line + "\n";
-        }
       }
-    }
 
-    std::sort(history_posts.begin(), history_posts.end(), [](const Post &a, const Post &b)
-              { return a.timestamp > b.timestamp; });
-
-    auto n = std::min((size_t)20, history_posts.size());
-    for (int i = 0; i < n; i++)
-    {
-      auto post = history_posts[i];
-      Message message;
-      message.set_username(post.username);
-      message.set_msg(post.post);
-      message.mutable_timestamp()->set_seconds(post.timestamp);
-      message.mutable_timestamp()->set_nanos(0);
-      stream->Write(message);
-    }
-
-    // allow the user to subscribe to new messages from the followings
-    client->stream = stream;
-
-    // listen the inputs from clients
-    while (stream->Read(&msg))
-    {
-      std::string new_post = "T " + google::protobuf::util::TimeUtil::ToString(msg.timestamp()) +
-                             "\nU " + msg.username() +
-                             "\nW " + msg.msg() + "\n\n";
-
-      std::ofstream file(timeline_file, std::ios::app);
-      file << new_post;
-      file.close();
-
-      // send the post to all followers of the user
-      for (Client *follower : client->client_followers)
-      {
-        if (follower->stream)
-        {
-          follower->stream->Write(msg);
-        }
-      }
-    }
-
-    client->stream = nullptr;
-
-    return Status::OK;
+      // **`Client` 退出 `Timeline`，清空 `stream`**
+      client->stream = nullptr;
+      monitor_thread.join();
+      return Status::OK;
   }
+
 };
 
 void RunServer(std::string port_no)
@@ -435,29 +366,81 @@ void RunServer(std::string port_no)
 
   server->Wait();
 }
+  void HeartbeatThread(std::string server_id, std::string coordinator_ip, std::string coordinator_port, std::string port) {
+      while (true) {
+          grpc::ClientContext context;
+          csce438::ServerInfo request;
+          csce438::Confirmation response;
 
-int main(int argc, char **argv)
-{
+          request.set_serverid(std::stoi(server_id));
+          request.set_hostname("127.0.0.1");
+          request.set_port(port);
 
-  std::string port = "3010";
+          std::unique_ptr<csce438::CoordService::Stub> stub = 
+              csce438::CoordService::NewStub(grpc::CreateChannel(
+                  coordinator_ip + ":" + coordinator_port, grpc::InsecureChannelCredentials()));
 
-  int opt = 0;
-  while ((opt = getopt(argc, argv, "p:")) != -1)
-  {
-    switch (opt)
-    {
-    case 'p':
-      port = optarg;
-      break;
-    default:
-      std::cerr << "Invalid Command Line Argument\n";
-    }
+          grpc::Status status = stub->Heartbeat(&context, request, &response);
+
+          if (!status.ok()) {
+              std::cerr << "[TSD] Heartbeat failed: " << status.error_message() << std::endl;
+          }
+
+          sleep(5);
+      }
   }
 
-  std::string log_file_name = std::string("server-") + port;
-  google::InitGoogleLogging(log_file_name.c_str());
-  log(INFO, "Logging Initialized. Server starting...");
-  RunServer(port);
-
-  return 0;
 }
+void MonitorTimeline(std::string timeline_file, std::shared_ptr<ClientWriter<Message>> stream) {
+    struct stat fileStat;
+    while (true) {
+        if (stat(timeline_file.c_str(), &fileStat) == 0) {
+            double diff = difftime(getTimeNow(), fileStat.st_mtime);
+            if (diff < 30) {
+                // 读取最新 20 条数据并发送给客户端
+                SendLatestPosts(stream);
+            }
+        }
+        sleep(5);
+    }
+}
+
+
+int main(int argc, char** argv) {
+    std::string cluster_id, server_id, coordinator_ip, coordinator_port, port;
+    
+    int opt = 0;
+    while ((opt = getopt(argc, argv, "c:s:h:k:p:")) != -1) {
+        switch (opt) {
+            case 'c': cluster_id = optarg; break;
+            case 's': server_id = optarg; break;
+            case 'h': coordinator_ip = optarg; break;
+            case 'k': coordinator_port = optarg; break;
+            case 'p': port = optarg; break;
+            default:
+                std::cerr << "Invalid Command Line Argument\n";
+                return -1;
+        }
+    }
+
+    // ✅ 确保所有参数都被正确解析
+    if (cluster_id.empty() || server_id.empty() || coordinator_ip.empty() || coordinator_port.empty() || port.empty()) {
+        std::cerr << "Usage: ./tsd -c <cluster_id> -s <server_id> -h <coordinator_ip> -k <coordinator_port> -p <port>\n";
+        return -1;
+    }
+
+    std::cout << "Server initialized with:\n"
+              << "Cluster ID: " << cluster_id << "\n"
+              << "Server ID: " << server_id << "\n"
+              << "Coordinator IP: " << coordinator_ip << "\n"
+              << "Coordinator Port: " << coordinator_port << "\n"
+              << "Port: " << port << std::endl;
+
+    // **向 Coordinator 发送心跳**
+    std::thread hb_thread(HeartbeatThread, server_id, coordinator_ip, coordinator_port, port);
+    hb_thread.detach();  // 确保线程不会阻塞主线程
+
+    RunServer(port);
+    return 0;
+}
+
