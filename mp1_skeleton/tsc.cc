@@ -73,28 +73,31 @@ private:
 int Client::connectTo() {
     grpc::ChannelArguments ch_args;
     ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
-    ServerInfo serverinfo; 
+
+    // 连接到 Coordinator
     std::string coordinator_address = hostname + ":" + port;
     auto coordinator_channel = grpc::CreateCustomChannel(coordinator_address, grpc::InsecureChannelCredentials(), ch_args);
-    std::cerr << "[Coordinator] Received heartbeat from Server " << serverinfo.serverid() 
-          << " at " << serverinfo.hostname() << ":" << serverinfo.port() << std::endl;
-
-    std::unique_ptr<CoordService::Stub> coordinator_stub = CoordService::NewStub(coordinator_channel);
-
     
+    // ✅ 在 GetServer 之前创建 stub
+    auto coordinator_stub = CoordService::NewStub(coordinator_channel);
+
     ID client_id;
     client_id.set_id(stoi(username));
     ServerInfo server_info;
     ClientContext context;
 
-    Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
-
-    std::cerr << "[Client] GetServer response: " << (Status.ok() ? "OK" : Status.error_message()) << std::endl;
+    // ✅ 确保使用 grpc::Status 避免冲突
+    grpc::Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
     if (!status.ok()) {
         std::cerr << "Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
         return -1;
     }
 
+    // ✅ 现在 server_info 已经初始化，可以打印
+    std::cerr << "[Coordinator] Received heartbeat from Server " << server_info.serverid()
+              << " at " << server_info.hostname() << ":" << server_info.port() << std::endl;
+
+    // 连接到指定的 Server
     std::string server_address = server_info.hostname() + ":" + server_info.port();
     std::cout << "[Client] Assigned Server: " << server_address << std::endl;
 
@@ -106,9 +109,9 @@ int Client::connectTo() {
         return -1;
     }
 
-    IReply reply = Login();
-    return reply.grpc_status.ok() && reply.comm_status != FAILURE_ALREADY_EXISTS ? 1 : -1;
+    return 1;
 }
+
 
 IReply Client::processCommand(std::string &input) {
     IReply ire;
