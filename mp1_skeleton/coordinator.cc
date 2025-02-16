@@ -137,6 +137,7 @@ class CoordServiceImpl final : public CoordService::Service {
             LOG(INFO) << "[Coordinator] 分配 Server " << server->serverID << " 给 Client " << client_id;
             return Status::OK;
         }
+        
 
 
 
