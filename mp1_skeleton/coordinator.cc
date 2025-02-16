@@ -88,6 +88,9 @@ class CoordServiceImpl final : public CoordService::Service {
         }
     
         confirmation->set_status(true);
+        std::cerr << "[Coordinator] Received heartbeat from Server " << serverinfo->serverid() 
+          << " at " << serverinfo->hostname() << ":" << serverinfo->port() << std::endl;
+
         return Status::OK;
     }
 
