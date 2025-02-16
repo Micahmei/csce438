@@ -64,11 +64,14 @@ std::time_t getTimeNow() {
 class CoordServiceImpl final : public CoordService::Service {
     Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
         std::lock_guard<std::mutex> lock(v_mutex);
-    
+        
         int cluster_id = (serverinfo->serverid() - 1) % 3;
         int server_id = serverinfo->serverid();
         bool found = false;
     
+        std::cerr << "[Coordinator] Received Heartbeat from Server " << server_id 
+                  << " at " << serverinfo->hostname() << ":" << serverinfo->port() << std::endl;
+        
         for (auto& server : clusters[cluster_id]) {
             if (server->serverID == server_id) {
                 server->last_heartbeat = getTimeNow();
@@ -88,11 +91,9 @@ class CoordServiceImpl final : public CoordService::Service {
         }
     
         confirmation->set_status(true);
-        std::cerr << "[Coordinator] Received heartbeat from Server " << serverinfo->serverid() 
-          << " at " << serverinfo->hostname() << ":" << serverinfo->port() << std::endl;
-
         return Status::OK;
     }
+
 
 
     Status GetServer(ServerContext* context, const ID* id, ServerInfo* serverinfo) override {
