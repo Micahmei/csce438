@@ -123,7 +123,7 @@ class CoordServiceImpl final : public CoordService::Service {
                 serverinfo->set_cluster_id(cluster_id + 1);
                 serverinfo->set_server_id(server->serverID);
                 serverinfo->set_ip(server->hostname);
-                serverinfo->set_port(server->port);
+                serverinfo->set_port(std::to_string(port));
                 return Status::OK;
             }
         }
