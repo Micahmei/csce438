@@ -70,7 +70,7 @@ std::time_t getTimeNow() {
 
 // ✅ Coordinator 服务实现
 class CoordServiceImpl final : public CoordService::Service {
-        Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
+        Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) {
             std::lock_guard<std::mutex> lock(v_mutex);
             
             LOG(INFO) << "[DEBUG] Entering Heartbeat() function";
