@@ -101,29 +101,25 @@ class CoordServiceImpl final : public CoordService::Service {
         int client_id = id->id();
         int cluster_id = (client_id - 1) % 3;
     
+        LOG(INFO) << "[Coordinator] Client " << client_id << " 请求 Server";
+    
         if (clusters[cluster_id].empty()) {
             LOG(ERROR) << "[Coordinator] No available servers for Client " << client_id;
             return Status::CANCELLED;
         }
     
-        zNode* selected_server = nullptr;
-        for (auto& server : clusters[cluster_id]) {
-            if (server->isActive()) {
-                selected_server = server;
-                break;
-            }
-        }
+        zNode* server = clusters[cluster_id][0];
     
-        if (!selected_server) {
-            LOG(ERROR) << "[Coordinator] No active servers found for Client " << client_id;
+        if (!server->isActive()) {
+            LOG(ERROR) << "[Coordinator] Assigned server " << server->serverID << " is inactive!";
             return Status::CANCELLED;
         }
     
-        serverinfo->set_serverid(selected_server->serverID);
-        serverinfo->set_hostname(selected_server->hostname);
-        serverinfo->set_port(selected_server->port);
+        serverinfo->set_serverid(server->serverID);
+        serverinfo->set_hostname(server->hostname);
+        serverinfo->set_port(server->port);
     
-        LOG(INFO) << "[Coordinator] Assigned Client " << client_id << " to Server " << selected_server->serverID;
+        LOG(INFO) << "[Coordinator] 分配 Server " << server->serverID << " 给 Client " << client_id;
         return Status::OK;
     }
 
