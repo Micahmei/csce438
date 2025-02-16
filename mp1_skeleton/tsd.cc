@@ -186,15 +186,17 @@ void HeartbeatThread(std::string server_id, std::string coordinator_ip, std::str
 
         std::cerr << "[TSD] Sending heartbeat to Coordinator at " << coordinator_ip << ":" << coordinator_port << std::endl;
         grpc::Status status = stub->Heartbeat(&context, request, &response);
-        std::cerr << "[TSD] Heartbeat response: " << (status.ok() ? "OK" : status.error_message()) << std::endl;
 
-        if (!status.ok()) {
+        if (status.ok()) {
+            std::cerr << "[TSD] Heartbeat response: OK" << std::endl;
+        } else {
             std::cerr << "[TSD] Heartbeat failed: " << status.error_message() << std::endl;
         }
 
         sleep(5);
     }
 }
+
 
 // ✅ 解析命令行参数并运行服务器
 int main(int argc, char** argv) {
