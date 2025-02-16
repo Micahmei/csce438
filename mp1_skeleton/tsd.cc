@@ -35,6 +35,11 @@
 
 #include <google/protobuf/timestamp.pb.h>
 #include <google/protobuf/duration.pb.h>
+#include <sys/stat.h>  // 解决 stat 结构体未定义
+#include <memory>      // 解决 shared_ptr 问题
+#include <thread>      // 解决 std::thread 相关问题
+#include <grpcpp/grpcpp.h>  // 解决 gRPC ClientWriter<Message> 问题
+#include "sns.grpc.pb.h"  // 确保包含 gRPC 生成的头文件
 
 #include <fstream>
 #include <filesystem>
