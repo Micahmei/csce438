@@ -93,6 +93,49 @@ public:
         reply->set_msg("followed successful");
         return Status::OK;
     }
+    Status UnFollow(ServerContext *context, const Request *request, Reply *reply) override {
+        std::string username = request->username();
+        std::string unfollow_username = request->arguments(0);
+    
+        if (username == unfollow_username) {
+            reply->set_msg("cannot unfollow self");
+            return Status::OK;
+        }
+    
+        Client *user = nullptr;
+        Client *unfollow_user = nullptr;
+    
+        for (auto &client : client_db) {
+            if (client->username == username) {
+                user = client;
+            }
+            if (client->username == unfollow_username) {
+                unfollow_user = client;
+            }
+        }
+    
+        if (!unfollow_user) {
+            reply->set_msg("unfollowed user no exist");
+            return Status::OK;
+        }
+    
+        auto it = std::find(user->client_following.begin(), user->client_following.end(), unfollow_user);
+        if (it != user->client_following.end()) {
+            user->client_following.erase(it);
+    
+            auto follower_it = std::find(unfollow_user->client_followers.begin(), unfollow_user->client_followers.end(), user);
+            if (follower_it != unfollow_user->client_followers.end()) {
+                unfollow_user->client_followers.erase(follower_it);
+            }
+            
+            reply->set_msg("unfollow successful");
+        } else {
+            reply->set_msg("not following user");
+        }
+    
+        return Status::OK;
+    }
+
 
     Status Login(ServerContext* context, const Request* request, Reply* reply) override {
         std::string username = request->username();
