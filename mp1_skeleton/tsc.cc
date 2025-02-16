@@ -74,11 +74,11 @@ int Client::connectTo() {
     grpc::ChannelArguments ch_args;
     ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
 
-    // 连接到 Coordinator
+    std::cerr << "[Client] Trying to connect to Coordinator at " << hostname << ":" << port << std::endl;
+    
+    // 创建 Coordinator 连接
     std::string coordinator_address = hostname + ":" + port;
     auto coordinator_channel = grpc::CreateCustomChannel(coordinator_address, grpc::InsecureChannelCredentials(), ch_args);
-    
-    // ✅ 在 GetServer 之前创建 stub
     auto coordinator_stub = CoordService::NewStub(coordinator_channel);
 
     ID client_id;
@@ -86,33 +86,32 @@ int Client::connectTo() {
     ServerInfo server_info;
     ClientContext context;
 
-    // ✅ 确保使用 grpc::Status 避免冲突
+    std::cerr << "[Client] Sending GetServer request to Coordinator..." << std::endl;
+
     grpc::Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
+
     std::cerr << "[Client] GetServer Response: "
-          << (status.ok() ? "OK" : status.error_message()) << std::endl;
+              << (status.ok() ? "OK" : status.error_message()) << std::endl;
+    
     if (!status.ok()) {
-        std::cerr << "Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
+        std::cerr << "[Client] Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
         return -1;
     }
+
     std::cerr << "[Client] Assigned Server: " << server_info.hostname() << ":" << server_info.port() << std::endl;
-    // ✅ 现在 server_info 已经初始化，可以打印
-    std::cerr << "[Coordinator] Received heartbeat from Server " << server_info.serverid()
-              << " at " << server_info.hostname() << ":" << server_info.port() << std::endl;
 
-    // 连接到指定的 Server
     std::string server_address = server_info.hostname() + ":" + server_info.port();
-    std::cout << "[Client] Assigned Server: " << server_address << std::endl;
-
     auto channel = grpc::CreateCustomChannel(server_address, grpc::InsecureChannelCredentials(), ch_args);
     stub_ = SNSService::NewStub(channel);
 
     if (!stub_) {
-        std::cerr << "Failed to create gRPC stub for Server." << std::endl;
+        std::cerr << "[Client] Failed to create gRPC stub for Server." << std::endl;
         return -1;
     }
 
     return 1;
 }
+
 
 
 IReply Client::processCommand(std::string &input) {
