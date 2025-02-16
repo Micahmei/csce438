@@ -76,7 +76,12 @@ int Client::connectTo() {
     
     std::string coordinator_address = hostname + ":" + port;
     auto coordinator_channel = grpc::CreateCustomChannel(coordinator_address, grpc::InsecureChannelCredentials(), ch_args);
+    std::cerr << "[Coordinator] Received heartbeat from Server " << serverinfo->serverid() 
+          << " at " << serverinfo->hostname() << ":" << serverinfo->port() << std::endl;
+
     std::unique_ptr<CoordService::Stub> coordinator_stub = CoordService::NewStub(coordinator_channel);
+    std::cerr << "[Client] GetServer response: " << (status.ok() ? "OK" : status.error_message()) << std::endl;
+
     
     ID client_id;
     client_id.set_id(stoi(username));
