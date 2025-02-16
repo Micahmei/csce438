@@ -98,16 +98,16 @@ class CoordServiceImpl final : public CoordService::Service {
     }
 
 
-
+    
     Status GetServer(ServerContext* context, const ID* id, ServerInfo* serverinfo) override {
         LOG(ERROR) << "[DEBUG] Entering GetServer() function";
-        std::lock_guard<std::mutex> lock(v_mutex);
     
+        std::lock_guard<std::mutex> lock(v_mutex);
         int client_id = id->id();
         int cluster_id = (client_id - 1) % 3;
     
-        LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " server count: " << clusters[cluster_id].size();
-
+        LOG(INFO) << "[Coordinator] Client " << client_id << " 请求 Server";
+        LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " size: " << clusters[cluster_id].size();
     
         if (clusters[cluster_id].empty()) {
             LOG(ERROR) << "[Coordinator] No available servers for Client " << client_id;
@@ -128,6 +128,7 @@ class CoordServiceImpl final : public CoordService::Service {
         LOG(INFO) << "[Coordinator] 分配 Server " << server->serverID << " 给 Client " << client_id;
         return Status::OK;
     }
+
 
 };
 
