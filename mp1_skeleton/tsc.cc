@@ -11,7 +11,7 @@
 
 #include "sns.grpc.pb.h"
 #include "coordinator.grpc.pb.h"  // 需要与 Coordinator 交互
-
+#include "coordinator.pb.h"
 using csce438::ListReply;
 using csce438::Message;
 using csce438::Reply;
