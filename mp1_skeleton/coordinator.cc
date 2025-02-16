@@ -69,6 +69,8 @@ class CoordServiceImpl final : public CoordService::Service {
         int cluster_id = (serverinfo->serverid() - 1) % 3;
         int server_id = serverinfo->serverid();
         bool found = false;
+        LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " size after heartbeat: " << clusters[cluster_id].size();
+
     
         std::cerr << "[Coordinator] Received Heartbeat from Server " << server_id 
                   << " at " << serverinfo->hostname() << ":" << serverinfo->port() << std::endl;
@@ -98,7 +100,7 @@ class CoordServiceImpl final : public CoordService::Service {
 
 
     Status GetServer(ServerContext* context, const ID* id, ServerInfo* serverinfo) override {
-        
+        LOG(ERROR) << "[DEBUG] Entering GetServer() function";
         std::lock_guard<std::mutex> lock(v_mutex);
     
         int client_id = id->id();
