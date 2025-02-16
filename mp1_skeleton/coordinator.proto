@@ -1,6 +1,5 @@
 syntax = "proto3";
 package csce438;
-import "google/protobuf/timestamp.proto";
 
 // ------------------------------------------------------------
 // The coordinator service definition
