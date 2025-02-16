@@ -16,7 +16,7 @@
 #include <unistd.h>
 #include <google/protobuf/util/time_util.h>
 #include <grpc++/grpc++.h>
-#include <glog/logging.h>  // ✅ 确保包含 glog 头文件
+#include <glog/logging.h>
 
 #include "coordinator.grpc.pb.h"
 #include "coordinator.pb.h"
@@ -34,8 +34,11 @@ using csce438::CoordService;
 using csce438::ServerInfo;
 using csce438::Confirmation;
 using csce438::ID;
+using csce438::PathAndData;
+using csce438::Path;
+using csce438::Status;
 
-// ✅ 先定义 zNode 结构体，否则后续的 vector 定义会报错
+// ✅ 服务器节点结构
 struct zNode {
     int serverID;
     std::string hostname;
@@ -50,16 +53,7 @@ struct zNode {
 
 // ✅ 线程安全变量
 std::mutex v_mutex;
-std::vector<zNode*> cluster1;  // 先声明 vector
-std::vector<zNode*> cluster2;
-std::vector<zNode*> cluster3;
-
-// ✅ 先创建 `clusters`，不要在 `{}` 里直接放变量
 std::vector<std::vector<zNode*>> clusters(3);
-
-// ✅ 函数声明
-std::time_t getTimeNow();
-void checkHeartbeat();
 
 // ✅ 获取当前时间
 std::time_t getTimeNow() {
@@ -79,7 +73,7 @@ class CoordServiceImpl final : public CoordService::Service {
                 server->last_heartbeat = getTimeNow();
                 server->missed_heartbeat = false;
                 LOG(INFO) << "[Coordinator] Received heartbeat from Server " << server_id;
-                confirmation->set_status("OK");
+                confirmation->set_status(true);
                 return Status::OK;
             }
         }
@@ -90,11 +84,8 @@ class CoordServiceImpl final : public CoordService::Service {
         };
         clusters[cluster_id].push_back(new_server);
 
-        std::time_t now = getTimeNow();
-        LOG(INFO) << "[Coordinator] Registered new Server " << server_id << " at "
-                  << serverinfo->hostname() << ":" << serverinfo->port() << " " << std::ctime(&now);
-
-        confirmation->set_status("OK");
+        LOG(INFO) << "[Coordinator] Registered new Server " << server_id;
+        confirmation->set_status(true);
         return Status::OK;
     }
 
@@ -103,7 +94,6 @@ class CoordServiceImpl final : public CoordService::Service {
 
         int client_id = id->id();
         int cluster_id = (client_id - 1) % 3;
-        int server_id = 1;
 
         if (clusters[cluster_id].empty()) {
             LOG(ERROR) << "[Coordinator] No available servers for Client " << client_id;
@@ -120,9 +110,7 @@ class CoordServiceImpl final : public CoordService::Service {
         serverinfo->set_hostname(server->hostname);
         serverinfo->set_port(server->port);
 
-        LOG(INFO) << "[Coordinator] Assigned Client " << client_id << " to Server " << server->serverID
-                  << " at " << server->hostname << ":" << server->port;
-
+        LOG(INFO) << "[Coordinator] Assigned Client " << client_id << " to Server " << server->serverID;
         return Status::OK;
     }
 };
@@ -131,13 +119,12 @@ class CoordServiceImpl final : public CoordService::Service {
 void checkHeartbeat() {
     while (true) {
         std::lock_guard<std::mutex> lock(v_mutex);
-
-        for (auto& c : clusters) {
-            for (auto& s : c) {
-                if (difftime(getTimeNow(), s->last_heartbeat) > 10) {
-                    if (!s->missed_heartbeat) {
-                        s->missed_heartbeat = true;
-                        LOG(WARNING) << "[Coordinator] Missed heartbeat from Server " << s->serverID;
+        for (auto& cluster : clusters) {
+            for (auto& server : cluster) {
+                if (difftime(getTimeNow(), server->last_heartbeat) > 10) {
+                    if (!server->missed_heartbeat) {
+                        server->missed_heartbeat = true;
+                        LOG(WARNING) << "[Coordinator] Missed heartbeat from Server " << server->serverID;
                     }
                 }
             }
@@ -148,42 +135,27 @@ void checkHeartbeat() {
 
 // ✅ 运行 Coordinator 服务器
 void RunServer(std::string port_no) {
-    std::thread hb_thread(checkHeartbeat);  // ✅ 确保 `checkHeartbeat()` 被正确声明
-
+    std::thread hb_thread(checkHeartbeat);
     std::string server_address("127.0.0.1:" + port_no);
     CoordServiceImpl service;
 
     ServerBuilder builder;
     builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
-
     std::unique_ptr<Server> server(builder.BuildAndStart());
     LOG(INFO) << "[Coordinator] Server listening on " << server_address;
     server->Wait();
 }
 
-// ✅ 主函数
 int main(int argc, char** argv) {
     std::string port = "3010";
-    int opt = 0;
-
+    int opt;
     while ((opt = getopt(argc, argv, "p:")) != -1) {
-        switch(opt) {
-            case 'p':
-                port = optarg;
-                break;
-            default:
-                std::cerr << "Invalid Command Line Argument\n";
-        }
+        if (opt == 'p') port = optarg;
     }
-    // ✅ 确保 clusters 结构正确
-    clusters[0].push_back(new zNode{1, "127.0.0.1", "10000", std::time(nullptr), false});
-    clusters[1].push_back(new zNode{2, "127.0.0.1", "10001", std::time(nullptr), false});
-    clusters[2].push_back(new zNode{3, "127.0.0.1", "10002", std::time(nullptr), false});
 
-
-    google::InitGoogleLogging(argv[0]);  // ✅ 初始化 glog
-    FLAGS_logtostderr = 1;  // ✅ 直接输出到终端
+    google::InitGoogleLogging(argv[0]);
+    FLAGS_logtostderr = 1;
     RunServer(port);
     return 0;
 }
