@@ -54,6 +54,12 @@ public:
                 break;
             }
         }
+        std::cerr << "[Server] Processing LIST request for user: " << request->username() << std::endl;
+        std::cerr << "[Server] Total users in client_db: " << client_db.size() << std::endl;
+        for (const auto& client : client_db) {
+            std::cerr << "[Server] User: " << client->username << std::endl;
+        }
+
         return Status::OK;
     }
 
