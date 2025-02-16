@@ -80,7 +80,6 @@ int Client::connectTo() {
           << " at " << serverinfo.hostname() << ":" << serverinfo.port() << std::endl;
 
     std::unique_ptr<CoordService::Stub> coordinator_stub = CoordService::NewStub(coordinator_channel);
-    std::cerr << "[Client] GetServer response: " << (Status.ok() ? "OK" : Status.error_message()) << std::endl;
 
     
     ID client_id;
@@ -89,6 +88,8 @@ int Client::connectTo() {
     ClientContext context;
 
     Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
+
+    std::cerr << "[Client] GetServer response: " << (Status.ok() ? "OK" : Status.error_message()) << std::endl;
     if (!status.ok()) {
         std::cerr << "Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
         return -1;
