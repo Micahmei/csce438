@@ -11,7 +11,7 @@
 
 #include "sns.grpc.pb.h"
 #include "coordinator.grpc.pb.h"  // ✅ 确保 Coordinator 连接可用
-
+using csce438::Confirmation;
 using csce438::ListReply;
 using csce438::Message;
 using csce438::Reply;
@@ -70,21 +70,21 @@ private:
 };
 
 // **连接 Coordinator 获取 Server**
-Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
+grpc::Status Heartbeat(grpc::ServerContext* context, const csce438::ServerInfo* serverinfo, csce438::Confirmation* confirmation) override {
     std::lock_guard<std::mutex> lock(v_mutex);
-    
+
     LOG(INFO) << "[DEBUG] Entering Heartbeat() function";
-    
+
     if (!serverinfo) {
         LOG(ERROR) << "[ERROR] Received null ServerInfo!";
-        return Status::CANCELLED;
+        return grpc::Status::CANCELLED;
     }
 
     int cluster_id = (serverinfo->serverid() - 1) % 3;
     int server_id = serverinfo->serverid();
     bool found = false;
 
-    LOG(INFO) << "[DEBUG] Heartbeat received from Server ID: " << server_id 
+    LOG(INFO) << "[DEBUG] Heartbeat received from Server ID: " << server_id
               << " at " << serverinfo->hostname() << ":" << serverinfo->port();
 
     for (auto& server : clusters[cluster_id]) {
@@ -108,8 +108,10 @@ Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmat
     LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " size after heartbeat: " << clusters[cluster_id].size();
 
     confirmation->set_status(true);
-    return Status::OK;
+    return grpc::Status::OK;
 }
+
+
 
 
 
