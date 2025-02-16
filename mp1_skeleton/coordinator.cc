@@ -40,6 +40,11 @@ using csce438::Path;
 using csce438::CoordStatus;
 std::mutex v_mutex;
 std::vector<std::vector<zNode*>> clusters(3);
+#include <chrono>
+
+std::time_t getTimeNow() {
+    return std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+}
 
 // ✅ 服务器节点结构
 struct zNode {
