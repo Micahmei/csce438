@@ -91,28 +91,36 @@ class CoordServiceImpl final : public CoordService::Service {
 
     Status GetServer(ServerContext* context, const ID* id, ServerInfo* serverinfo) override {
         std::lock_guard<std::mutex> lock(v_mutex);
-
+    
         int client_id = id->id();
         int cluster_id = (client_id - 1) % 3;
-
+    
         if (clusters[cluster_id].empty()) {
             LOG(ERROR) << "[Coordinator] No available servers for Client " << client_id;
             return Status::CANCELLED;
         }
-
-        zNode* server = clusters[cluster_id][0];
-        if (!server->isActive()) {
-            LOG(ERROR) << "[Coordinator] Assigned server " << server->serverID << " is inactive!";
+    
+        zNode* selected_server = nullptr;
+        for (auto& server : clusters[cluster_id]) {
+            if (server->isActive()) {
+                selected_server = server;
+                break;
+            }
+        }
+    
+        if (!selected_server) {
+            LOG(ERROR) << "[Coordinator] No active servers found for Client " << client_id;
             return Status::CANCELLED;
         }
-
-        serverinfo->set_serverid(server->serverID);
-        serverinfo->set_hostname(server->hostname);
-        serverinfo->set_port(server->port);
-
-        LOG(INFO) << "[Coordinator] Assigned Client " << client_id << " to Server " << server->serverID;
+    
+        serverinfo->set_serverid(selected_server->serverID);
+        serverinfo->set_hostname(selected_server->hostname);
+        serverinfo->set_port(selected_server->port);
+    
+        LOG(INFO) << "[Coordinator] Assigned Client " << client_id << " to Server " << selected_server->serverID;
         return Status::OK;
     }
+
 };
 
 // ✅ 服务器心跳检测
@@ -120,18 +128,21 @@ void checkHeartbeat() {
     while (true) {
         std::lock_guard<std::mutex> lock(v_mutex);
         for (auto& cluster : clusters) {
-            for (auto& server : cluster) {
-                if (difftime(getTimeNow(), server->last_heartbeat) > 10) {
-                    if (!server->missed_heartbeat) {
-                        server->missed_heartbeat = true;
-                        LOG(WARNING) << "[Coordinator] Missed heartbeat from Server " << server->serverID;
-                    }
+            auto it = cluster.begin();
+            while (it != cluster.end()) {
+                if (difftime(getTimeNow(), (*it)->last_heartbeat) > 10) {
+                    LOG(ERROR) << "[Coordinator] Server " << (*it)->serverID << " is removed due to heartbeat timeout!";
+                    delete *it;
+                    it = cluster.erase(it);
+                } else {
+                    ++it;
                 }
             }
         }
         sleep(3);
     }
 }
+
 
 // ✅ 运行 Coordinator 服务器
 void RunServer(std::string port_no) {
