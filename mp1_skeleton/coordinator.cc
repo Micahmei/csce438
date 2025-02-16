@@ -36,7 +36,7 @@ using csce438::Confirmation;
 using csce438::ID;
 using csce438::PathAndData;
 using csce438::Path;
-using csce438::Status;
+using csce438::CoordStatus;
 
 // ✅ 服务器节点结构
 struct zNode {
