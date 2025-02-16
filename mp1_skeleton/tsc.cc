@@ -70,47 +70,47 @@ private:
 };
 
 // **连接 Coordinator 获取 Server**
-int Client::connectTo() {
-    grpc::ChannelArguments ch_args;
-    ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
-
-    std::cerr << "[Client] Trying to connect to Coordinator at " << hostname << ":" << port << std::endl;
+Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
+    std::lock_guard<std::mutex> lock(v_mutex);
     
-    // 创建 Coordinator 连接
-    std::string coordinator_address = hostname + ":" + port;
-    auto coordinator_channel = grpc::CreateCustomChannel(coordinator_address, grpc::InsecureChannelCredentials(), ch_args);
-    auto coordinator_stub = CoordService::NewStub(coordinator_channel);
-
-    ID client_id;
-    client_id.set_id(stoi(username));
-    ServerInfo server_info;
-    ClientContext context;
-
-    std::cerr << "[Client] Sending GetServer request to Coordinator..." << std::endl;
-
-    grpc::Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
-
-    std::cerr << "[Client] GetServer Response: "
-              << (status.ok() ? "OK" : status.error_message()) << std::endl;
+    LOG(INFO) << "[DEBUG] Entering Heartbeat() function";
     
-    if (!status.ok()) {
-        std::cerr << "[Client] Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
-        return -1;
+    if (!serverinfo) {
+        LOG(ERROR) << "[ERROR] Received null ServerInfo!";
+        return Status::CANCELLED;
     }
 
-    std::cerr << "[Client] Assigned Server: " << server_info.hostname() << ":" << server_info.port() << std::endl;
+    int cluster_id = (serverinfo->serverid() - 1) % 3;
+    int server_id = serverinfo->serverid();
+    bool found = false;
 
-    std::string server_address = server_info.hostname() + ":" + server_info.port();
-    auto channel = grpc::CreateCustomChannel(server_address, grpc::InsecureChannelCredentials(), ch_args);
-    stub_ = SNSService::NewStub(channel);
+    LOG(INFO) << "[DEBUG] Heartbeat received from Server ID: " << server_id 
+              << " at " << serverinfo->hostname() << ":" << serverinfo->port();
 
-    if (!stub_) {
-        std::cerr << "[Client] Failed to create gRPC stub for Server." << std::endl;
-        return -1;
+    for (auto& server : clusters[cluster_id]) {
+        if (server->serverID == server_id) {
+            server->last_heartbeat = getTimeNow();
+            server->missed_heartbeat = false;
+            found = true;
+            LOG(INFO) << "[Coordinator] Heartbeat updated for Server " << server_id;
+            break;
+        }
     }
 
-    return 1;
+    if (!found) {
+        zNode* new_server = new zNode{
+            server_id, serverinfo->hostname(), serverinfo->port(), getTimeNow(), false
+        };
+        clusters[cluster_id].push_back(new_server);
+        LOG(INFO) << "[Coordinator] Registered new Server " << server_id;
+    }
+
+    LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " size after heartbeat: " << clusters[cluster_id].size();
+
+    confirmation->set_status(true);
+    return Status::OK;
 }
+
 
 
 
