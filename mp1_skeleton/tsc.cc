@@ -7,12 +7,10 @@
 #include <csignal>
 #include <algorithm>
 #include <grpc++/grpc++.h>
-#include <sys/stat.h>  // 解决 stat 结构体未定义
-#include <grpcpp/grpcpp.h>  // 解决 gRPC ClientWriter<Message> 问题
-
 #include "client.h"
-#include "sns.grpc.pb.h"  // 确保包含 gRPC 生成的头文件
-#include "coordinator.grpc.pb.h"  // Coordinator 连接
+
+#include "sns.grpc.pb.h"
+#include "coordinator.grpc.pb.h"  // ✅ 确保 Coordinator 连接可用
 
 using csce438::ListReply;
 using csce438::Message;
@@ -31,7 +29,7 @@ using grpc::Status;
 
 // 处理 Ctrl+C 信号
 void sig_ignore(int sig) {
-    std::cout << "Signal caught " + std::to_string(sig) << std::endl;
+    std::cout << "Signal caught " << sig << std::endl;
 }
 
 // 生成消息
@@ -236,6 +234,7 @@ void Client::Timeline(const std::string &username) {
     reader.join();
 }
 
+// **主函数**
 int main(int argc, char **argv) {
     std::string hostname = "127.0.0.1", username = "default", port = "9090";
 
