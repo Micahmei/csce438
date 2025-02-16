@@ -63,6 +63,7 @@ std::time_t getTimeNow() {
 // ✅ Coordinator 服务实现
 class CoordServiceImpl final : public CoordService::Service {
     Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
+        LOG(ERROR) << "[DEBUG] Entering Heartbeat() function";
         std::lock_guard<std::mutex> lock(v_mutex);
         
         int cluster_id = (serverinfo->serverid() - 1) % 3;
@@ -97,12 +98,14 @@ class CoordServiceImpl final : public CoordService::Service {
 
 
     Status GetServer(ServerContext* context, const ID* id, ServerInfo* serverinfo) override {
+        
         std::lock_guard<std::mutex> lock(v_mutex);
     
         int client_id = id->id();
         int cluster_id = (client_id - 1) % 3;
     
-        LOG(INFO) << "[Coordinator] Client " << client_id << " 请求 Server";
+        LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " server count: " << clusters[cluster_id].size();
+
     
         if (clusters[cluster_id].empty()) {
             LOG(ERROR) << "[Coordinator] No available servers for Client " << client_id;
