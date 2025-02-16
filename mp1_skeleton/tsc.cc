@@ -236,16 +236,29 @@ void Client::Timeline(const std::string &username) {
 
 // **主函数**
 int main(int argc, char **argv) {
-    std::string hostname = "127.0.0.1", username = "default", port = "9090";
+    std::string hostname = "127.0.0.1", username = "default", port = "9090", coordinator_port = "9090";
 
     int opt;
-    while ((opt = getopt(argc, argv, "h:u:p:")) != -1) {
-        if (opt == 'h') hostname = optarg;
-        else if (opt == 'u') username = optarg;
-        else if (opt == 'p') port = optarg;
+    while ((opt = getopt(argc, argv, "h:u:p:k:")) != -1) {
+        switch (opt) {
+            case 'h': hostname = optarg; break;
+            case 'u': username = optarg; break;
+            case 'p': port = optarg; break;
+            case 'k': coordinator_port = optarg; break; // ✅ 让 `-k` 可用
+            default:
+                std::cerr << "Invalid Command Line Argument\n";
+                return -1;
+        }
     }
+
+    std::cout << "Starting Client with:\n"
+              << "Hostname: " << hostname << "\n"
+              << "Username: " << username << "\n"
+              << "Port: " << port << "\n"
+              << "Coordinator Port: " << coordinator_port << std::endl;
 
     Client myc(hostname, username, port);
     myc.run();
     return 0;
 }
+
