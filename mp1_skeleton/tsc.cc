@@ -73,7 +73,7 @@ private:
 int Client::connectTo() {
     grpc::ChannelArguments ch_args;
     ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
-    
+    ServerInfo serverinfo; 
     std::string coordinator_address = hostname + ":" + port;
     auto coordinator_channel = grpc::CreateCustomChannel(coordinator_address, grpc::InsecureChannelCredentials(), ch_args);
     std::cerr << "[Coordinator] Received heartbeat from Server " << serverinfo->serverid() 
