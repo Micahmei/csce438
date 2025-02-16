@@ -62,40 +62,37 @@ std::time_t getTimeNow() {
 
 // ✅ Coordinator 服务实现
 class CoordServiceImpl final : public CoordService::Service {
-    Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
-        LOG(ERROR) << "[DEBUG] Entering Heartbeat() function";
-        std::lock_guard<std::mutex> lock(v_mutex);
+        Status Heartbeat(ServerContext* context, const ServerInfo* serverinfo, Confirmation* confirmation) override {
+            std::lock_guard<std::mutex> lock(v_mutex);
         
-        int cluster_id = (serverinfo->serverid() - 1) % 3;
-        int server_id = serverinfo->serverid();
-        bool found = false;
-        LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " size after heartbeat: " << clusters[cluster_id].size();
-
-    
-        std::cerr << "[Coordinator] Received Heartbeat from Server " << server_id 
-                  << " at " << serverinfo->hostname() << ":" << serverinfo->port() << std::endl;
+            int cluster_id = (serverinfo->serverid() - 1) % 3;
+            int server_id = serverinfo->serverid();
+            bool found = false;
         
-        for (auto& server : clusters[cluster_id]) {
-            if (server->serverID == server_id) {
-                server->last_heartbeat = getTimeNow();
-                server->missed_heartbeat = false;
-                found = true;
-                LOG(INFO) << "[Coordinator] Heartbeat updated for Server " << server_id;
-                break;
+            for (auto& server : clusters[cluster_id]) {
+                if (server->serverID == server_id) {
+                    server->last_heartbeat = getTimeNow();
+                    server->missed_heartbeat = false;
+                    found = true;
+                    LOG(INFO) << "[Coordinator] Heartbeat updated for Server " << server_id;
+                    break;
+                }
             }
+        
+            if (!found) {
+                zNode* new_server = new zNode{
+                    server_id, serverinfo->hostname(), serverinfo->port(), getTimeNow(), false
+                };
+                clusters[cluster_id].push_back(new_server);
+                LOG(INFO) << "[Coordinator] Registered new Server " << server_id;
+            }
+        
+            LOG(INFO) << "[DEBUG] Cluster " << cluster_id << " size after heartbeat: " << clusters[cluster_id].size();
+        
+            confirmation->set_status(true);
+            return Status::OK;
         }
-    
-        if (!found) {
-            zNode* new_server = new zNode{
-                server_id, serverinfo->hostname(), serverinfo->port(), getTimeNow(), false
-            };
-            clusters[cluster_id].push_back(new_server);
-            LOG(INFO) << "[Coordinator] Registered new Server " << server_id;
-        }
-    
-        confirmation->set_status(true);
-        return Status::OK;
-    }
+
 
 
     
