@@ -20,7 +20,8 @@
 
 #include "coordinator.grpc.pb.h"
 #include "coordinator.pb.h"
-
+extern std::mutex v_mutex;
+extern std::vector<std::vector<zNode*>> clusters;
 using google::protobuf::Timestamp;
 using google::protobuf::Duration;
 using grpc::Server;
@@ -37,6 +38,8 @@ using csce438::ID;
 using csce438::PathAndData;
 using csce438::Path;
 using csce438::CoordStatus;
+std::mutex v_mutex;
+std::vector<std::vector<zNode*>> clusters(3);
 
 // ✅ 服务器节点结构
 struct zNode {
