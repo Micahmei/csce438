@@ -88,11 +88,13 @@ int Client::connectTo() {
 
     // ✅ 确保使用 grpc::Status 避免冲突
     grpc::Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
+    std::cerr << "[Client] GetServer Response: "
+          << (status.ok() ? "OK" : status.error_message()) << std::endl;
     if (!status.ok()) {
         std::cerr << "Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
         return -1;
     }
-
+    std::cerr << "[Client] Assigned Server: " << server_info.hostname() << ":" << server_info.port() << std::endl;
     // ✅ 现在 server_info 已经初始化，可以打印
     std::cerr << "[Coordinator] Received heartbeat from Server " << server_info.serverid()
               << " at " << server_info.hostname() << ":" << server_info.port() << std::endl;
