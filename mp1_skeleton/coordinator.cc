@@ -17,6 +17,7 @@
 #include <google/protobuf/util/time_util.h>
 #include <grpc++/grpc++.h>
 #include <glog/logging.h>
+#include "coordinator.h"
 
 #include "coordinator.grpc.pb.h"
 #include "coordinator.pb.h"
@@ -38,8 +39,6 @@ using csce438::ID;
 using csce438::PathAndData;
 using csce438::Path;
 using csce438::CoordStatus;
-std::mutex v_mutex;
-std::vector<std::vector<zNode*>> clusters(3);
 #include <chrono>
 
 std::time_t getTimeNow() {
