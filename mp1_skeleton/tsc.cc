@@ -71,49 +71,49 @@ private:
 ///////////////////////////////////////////////////////////
 //
 //////////////////////////////////////////////////////////
-int Client::connectTo()
-{
-  // ------------------------------------------------------------
-  // In this function, you are supposed to create a stub so that
-  // you call service methods in the processCommand/porcessTimeline
-  // functions. That is, the stub should be accessible when you want
-  // to call any service methods in those functions.
-  // Please refer to gRpc tutorial how to create a stub.
-  // ------------------------------------------------------------
+int Client::connectTo() {
+    grpc::ChannelArguments ch_args;
+    ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
+    
+    // 连接 Coordinator 获取 Server 信息
+    std::string coordinator_address = hostname + ":" + port;
+    auto coordinator_channel = grpc::CreateCustomChannel(coordinator_address, grpc::InsecureChannelCredentials(), ch_args);
+    std::unique_ptr<csce438::CoordService::Stub> coordinator_stub = csce438::CoordService::NewStub(coordinator_channel);
+    
+    // 发送 Client ID 获取 Server 地址
+    ID client_id;
+    client_id.set_id(stoi(username));  // username 存的是 client ID
+    ServerInfo server_info;
+    ClientContext context;
 
-  ///////////////////////////////////////////////////////////
-  // YOUR CODE HERE
-  //////////////////////////////////////////////////////////
+    Status status = coordinator_stub->GetServer(&context, client_id, &server_info);
+    if (!status.ok()) {
+        std::cerr << "Failed to get Server info from Coordinator: " << status.error_message() << std::endl;
+        return -1;
+    }
 
-  // prevent gRPC from using global http_proxy
-  grpc::ChannelArguments ch_args;
-  ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
-  std::string server_address = hostname + ":" + port;
-  auto channel = grpc::CreateCustomChannel(
-      hostname + ":" + port,
-      grpc::InsecureChannelCredentials(),
-      ch_args);
+    std::string server_address = server_info.hostname() + ":" + server_info.port();
+    std::cout << "[Client] Assigned Server: " << server_address << std::endl;
 
-  stub_ = SNSService::NewStub(channel);
-  if (!stub_)
-  {
-    std::cerr << "Failed to create gRPC stub." << std::endl;
+    // 连接分配到的 Server
+    auto channel = grpc::CreateCustomChannel(server_address, grpc::InsecureChannelCredentials(), ch_args);
+    stub_ = SNSService::NewStub(channel);
+
+    if (!stub_) {
+        std::cerr << "Failed to create gRPC stub for Server." << std::endl;
+        return -1;
+    }
+
+    // 执行登录
+    IReply reply = Login();
+    if (reply.grpc_status.ok()) {
+        if (reply.comm_status == FAILURE_ALREADY_EXISTS)
+            return -1;
+        return 1;
+    }
     return -1;
-  }
-  else
-  {
-    std::cout << "success to create gRPC stub." << std::endl;
-  }
-
-  IReply reply = Login();
-  if (reply.grpc_status.ok())
-  {
-    if (reply.comm_status == FAILURE_ALREADY_EXISTS)
-      return -1;
-    return 1;
-  }
-  return -1;
 }
+
 
 IReply Client::processCommand(std::string &input)
 {
