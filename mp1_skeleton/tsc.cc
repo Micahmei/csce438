@@ -10,8 +10,8 @@
 #include "client.h"
 
 #include "sns.grpc.pb.h"
-#include "coordinator.grpc.pb.h"  // 需要与 Coordinator 交互
-#include "coordinator.pb.h"
+#include "coordinator.grpc.pb.h"
+
 using csce438::ListReply;
 using csce438::Message;
 using csce438::Reply;
@@ -23,45 +23,6 @@ using grpc::ClientReader;
 using grpc::ClientReaderWriter;
 using grpc::ClientWriter;
 using grpc::Status;
-
-/* ======= HEARTBEAT 代码 ======= */
-using csce438::Coordinator;
-using csce438::ClientInfo;
-using csce438::Confirmation;
-
-class ClientNode {
-public:
-    ClientNode(std::shared_ptr<Channel> channel)
-        : stub_(Coordinator::NewStub(channel)) {}
-
-    void SendHeartbeat(const std::string& username) {
-        ClientInfo request;
-        request.set_username(username);
-
-        Confirmation reply;
-        ClientContext context;
-
-        Status status = stub_->ClientHeartbeat(&context, request, &reply);
-        if (status.ok()) {
-            std::cout << "[HEARTBEAT] Client " << username << " is active." << std::endl;
-        } else {
-            std::cerr << "[HEARTBEAT ERROR] Failed to send heartbeat to Coordinator." << std::endl;
-        }
-    }
-
-private:
-    std::unique_ptr<Coordinator::Stub> stub_;
-};
-
-// 让 Heartbeat 在后台运行
-void RunHeartbeat(ClientNode* client, const std::string& username) {
-    while (true) {
-        client->SendHeartbeat(username);
-        std::this_thread::sleep_for(std::chrono::seconds(5));  // 每 5 秒发送一次心跳
-    }
-}
-
-/* ======= 原来的 `tsc.cc` 代码保留 ======= */
 
 void sig_ignore(int sig)
 {
@@ -86,7 +47,7 @@ public:
   Client(const std::string &hname,
          const std::string &uname,
          const std::string &p)
-      : hostname(hname), username(uname), port(p) {}
+      : cord_ip(hname), username(uname), cord_port(p) {}
 
 protected:
   virtual int connectTo();
@@ -94,11 +55,15 @@ protected:
   virtual void processTimeline();
 
 private:
-  std::string hostname;
+  uint64_t client_id;
+  std::string cord_ip;
   std::string username;
-  std::string port;
+  std::string cord_port;
 
+  // You can have an instance of the client stub
+  // as a member variable.
   std::unique_ptr<SNSService::Stub> stub_;
+  std::unique_ptr<csce438::Coordinator::Stub> coordinator_stub;
 
   IReply Login();
   IReply List();
@@ -107,40 +72,127 @@ private:
   void Timeline(const std::string &username);
 };
 
+///////////////////////////////////////////////////////////
+//
+//////////////////////////////////////////////////////////
 int Client::connectTo()
 {
+  // ------------------------------------------------------------
+  // In this function, you are supposed to create a stub so that
+  // you call service methods in the processCommand/porcessTimeline
+  // functions. That is, the stub should be accessible when you want
+  // to call any service methods in those functions.
+  // Please refer to gRpc tutorial how to create a stub.
+  // ------------------------------------------------------------
+
+  ///////////////////////////////////////////////////////////
+  // YOUR CODE HERE
+  //////////////////////////////////////////////////////////
+
+  // prevent gRPC from using global http_proxy
   grpc::ChannelArguments ch_args;
   ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
-  std::string server_address = hostname + ":" + port;
-  auto channel = grpc::CreateCustomChannel(
-      hostname + ":" + port,
-      grpc::InsecureChannelCredentials(),
-      ch_args);
 
-  stub_ = SNSService::NewStub(channel);
-  if (!stub_)
+  // connect to coordinator first
+  auto coordinator_channel = grpc::CreateCustomChannel(cord_ip + ":" + cord_port, grpc::InsecureChannelCredentials(), ch_args);
+  coordinator_stub = csce438::Coordinator::NewStub(coordinator_channel);
+
+  if (!coordinator_stub)
   {
-    std::cerr << "Failed to create gRPC stub." << std::endl;
+    std::cerr << "Failed to create coordinator stub." << std::endl;
     return -1;
+  }
+
+  ClientContext context;
+  csce438::ServerInfo server_info;
+  csce438::ID id;
+  id.set_client_id(std::stoull(username));
+  Status connect_to_coordinator_status = coordinator_stub->GetServer(&context, id, &server_info);
+  if (connect_to_coordinator_status.ok())
+  {
+    if (server_info.server_id() == 0)
+    {
+      std::cerr << "no available server" << std::endl;
+      return -1;
+    }
+    else
+    {
+      std::string server_address = server_info.server_ip() + ":" + server_info.server_port();
+      auto channel = grpc::CreateCustomChannel(server_address, grpc::InsecureChannelCredentials(), ch_args);
+      stub_ = SNSService::NewStub(channel);
+      if (!stub_)
+      {
+        std::cerr << "Failed to create server stub." << std::endl;
+        return -1;
+      }
+      IReply reply = Login();
+      if (reply.grpc_status.ok())
+      {
+        if (reply.comm_status == FAILURE_ALREADY_EXISTS)
+          return -1;
+        return 1;
+      }
+    }
   }
   else
   {
-    std::cout << "success to create gRPC stub." << std::endl;
-  }
-
-  IReply reply = Login();
-  if (reply.grpc_status.ok())
-  {
-    if (reply.comm_status == FAILURE_ALREADY_EXISTS)
-      return -1;
-    return 1;
+    std::cerr << "RPC failed with error code " << connect_to_coordinator_status.error_code() << ": " << connect_to_coordinator_status.error_message() << std::endl;
+    std::cerr << "Details: " << connect_to_coordinator_status.error_details() << std::endl;
   }
   return -1;
 }
 
 IReply Client::processCommand(std::string &input)
 {
+  // ------------------------------------------------------------
+  // GUIDE 1:
+  // In this function, you are supposed to parse the given input
+  // command and create your own message so that you call an
+  // appropriate service method. The input command will be one
+  // of the followings:
+  //
+  // FOLLOW <username>
+  // UNFOLLOW <username>
+  // LIST
+  // TIMELINE
+  // ------------------------------------------------------------
+
+  // ------------------------------------------------------------
+  // GUIDE 2:
+  // Then, you should create a variable of IReply structure
+  // provided by the client.h and initialize it according to
+  // the result. Finally you can finish this function by returning
+  // the IReply.
+  // ------------------------------------------------------------
+
+  // ------------------------------------------------------------
+  // HINT: How to set the IReply?
+  // Suppose you have "FOLLOW" service method for FOLLOW command,
+  // IReply can be set as follow:
+  //
+  //     // some codes for creating/initializing parameters for
+  //     // service method
+  //     IReply ire;
+  //     grpc::Status status = stub_->FOLLOW(&context, /* some parameters */);
+  //     ire.grpc_status = status;
+  //     if (status.ok()) {
+  //         ire.comm_status = SUCCESS;
+  //     } else {
+  //         ire.comm_status = FAILURE_NOT_EXISTS;
+  //     }
+  //
+  //      return ire;
+  //
+  // IMPORTANT:
+  // For the command "LIST", you should set both "all_users" and
+  // "following_users" member variable of IReply.
+  // ------------------------------------------------------------
+
   IReply ire;
+
+  /*********
+  YOUR CODE HERE
+  **********/
   std::istringstream iss(input);
   std::string command, argument;
   iss >> command;
@@ -176,9 +228,15 @@ void Client::processTimeline()
   Timeline(username);
 }
 
+// List Command
 IReply Client::List()
 {
+
   IReply ire;
+
+  /*********
+  YOUR CODE HERE
+  **********/
   Request request;
   request.set_username(username);
 
@@ -201,16 +259,150 @@ IReply Client::List()
   return ire;
 }
 
+// Follow Command
+IReply Client::Follow(const std::string &username2)
+{
+
+  IReply ire;
+
+  /***
+  YOUR CODE HERE
+  ***/
+  Request request;
+  request.set_username(username);
+  request.add_arguments(username2);
+
+  Reply reply;
+  ClientContext context;
+
+  Status status = stub_->Follow(&context, request, &reply);
+  ire.grpc_status = status;
+
+  if (status.ok())
+  {
+    if (reply.msg() == "followed successful")
+      ire.comm_status = SUCCESS;
+    else if (reply.msg() == "cannot follow self")
+      ire.comm_status = FAILURE_ALREADY_EXISTS;
+    else if (reply.msg() == "followed user no exist")
+      ire.comm_status = FAILURE_INVALID_USERNAME;
+  }
+  else
+  {
+    ire.comm_status = FAILURE_UNKNOWN;
+  }
+
+  return ire;
+}
+
+// UNFollow Command
+IReply Client::UnFollow(const std::string &username2)
+{
+
+  IReply ire;
+
+  /***
+  YOUR CODE HERE
+  ***/
+  Request request;
+  request.set_username(username);
+  request.add_arguments(username2);
+
+  Reply reply;
+  ClientContext context;
+
+  Status status = stub_->UnFollow(&context, request, &reply);
+  ire.grpc_status = status;
+
+  if (status.ok())
+  {
+    if (reply.msg() == "unfollow successful")
+      ire.comm_status = SUCCESS;
+    else if (reply.msg() == "unfollowed user no exist")
+      ire.comm_status = FAILURE_INVALID_USERNAME;
+    else if (reply.msg() == "cannot unfollow self")
+      ire.comm_status = FAILURE_INVALID_USERNAME;
+  }
+  else
+  {
+    ire.comm_status = FAILURE_UNKNOWN;
+  }
+
+  return ire;
+}
+
+// Login Command
+IReply Client::Login()
+{
+
+  IReply ire;
+
+  /***
+   YOUR CODE HERE
+  ***/
+  Request request;
+  request.set_username(username);
+
+  Reply reply;
+  ClientContext context;
+
+  Status status = stub_->Login(&context, request, &reply);
+
+  if (!status.error_message().empty())
+  {
+    std::cerr << status.error_message() << std::endl;
+  }
+  ire.grpc_status = status;
+
+  if (status.ok())
+  {
+    if (reply.msg() == "login successful")
+      ire.comm_status = SUCCESS;
+    else if (reply.msg() == "user already exists")
+      ire.comm_status = FAILURE_ALREADY_EXISTS;
+  }
+  else
+  {
+    ire.comm_status = FAILURE_UNKNOWN;
+  }
+
+  return ire;
+}
+
+// Timeline Command
 void Client::Timeline(const std::string &username)
 {
+
+  // ------------------------------------------------------------
+  // In this function, you are supposed to get into timeline mode.
+  // You may need to call a service method to communicate with
+  // the server. Use getPostMessage/displayPostMessage functions
+  // in client.cc file for both getting and displaying messages
+  // in timeline mode.
+  // ------------------------------------------------------------
+
+  // ------------------------------------------------------------
+  // IMPORTANT NOTICE:
+  //
+  // Once a user enter to timeline mode , there is no way
+  // to command mode. You don't have to worry about this situation,
+  // and you can terminate the client program by pressing
+  // CTRL-C (SIGINT)
+  // ------------------------------------------------------------
+
+  /***
+  YOUR CODE HERE
+  ***/
   ClientContext context;
   std::shared_ptr<ClientReaderWriter<Message, Message>> stream(
       stub_->Timeline(&context));
 
+  // send username
   Message init_msg;
   init_msg.set_username(username);
   stream->Write(init_msg);
 
+  // folk a new thread to read new posts from server
   std::thread reader(
       [stream]()
       {
@@ -222,6 +414,7 @@ void Client::Timeline(const std::string &username)
         }
       });
 
+  // process the inputs and send them into stream
   while (true)
   {
     std::string user_msg = getPostMessage();
@@ -235,42 +428,40 @@ void Client::Timeline(const std::string &username)
   reader.join();
 }
 
+//////////////////////////////////////////////
+// Main Function
+/////////////////////////////////////////////
 int main(int argc, char **argv)
 {
-  std::string hostname = "127.0.0.1";
   std::string username = "default";
-  std::string port = "3010";
-  std::string coordinator_host = "localhost";
-  int coordinator_port = 9090;
+
+  std::string cord_ip = "127.0.0.1";
+  std::string cord_port = "9090";
 
   int opt = 0;
-  while ((opt = getopt(argc, argv, "h:u:p:k:")) != -1)
+  while ((opt = getopt(argc, argv, "h:u:k:")) != -1)
   {
     switch (opt)
     {
     case 'h':
-      hostname = optarg;
+      cord_ip = optarg;
       break;
     case 'u':
       username = optarg;
       break;
-    case 'p':
-      port = optarg;
-      break;
     case 'k':
-      coordinator_port = std::stoi(optarg);
+      cord_port = optarg;
       break;
     default:
       std::cout << "Invalid Command Line Argument\n";
     }
   }
 
-  Client myc(hostname, username, port);
-  ClientNode client(grpc::CreateChannel(coordinator_host + ":" + std::to_string(coordinator_port), grpc::InsecureChannelCredentials()));
+  std::cout << "Logging Initialized. Client starting..." << std::endl;
 
-  std::thread heartbeat_thread(RunHeartbeat, &client, username);
-  heartbeat_thread.detach();  // 让 `HEARTBEAT` 在后台运行
+  Client myc(cord_ip, username, cord_port);
 
   myc.run();
+
   return 0;
 }
