@@ -29,20 +29,31 @@ struct ServersMap
 {
   std::unordered_map<uint64_t, std::unordered_map<uint64_t, zNode>> clusters;
 
-  zNode *FindServer(uint64_t cluster_id, uint64_t server_id)
+  std::vector<zNode *> FindServer(uint64_t cluster_id, uint64_t server_id = 0)
   {
     if (clusters.find(cluster_id) == clusters.end())
     {
-      return nullptr;
+      return {};
+    }
+    if (server_id == 0)
+    {
+      std::vector<zNode *> servers;
+      for (auto it = clusters[cluster_id].begin(); it != clusters[cluster_id].end(); it++)
+      {
+        servers.push_back(&(it->second));
+      }
+      return servers;
     }
     auto it = clusters[cluster_id].find(server_id);
     if (it != clusters[cluster_id].end())
     {
-      return &(it->second);
+      std::vector<zNode *> servers;
+      servers.push_back(&(it->second));
+      return servers;
     }
     else
     {
-      return nullptr;
+      return {};
     }
   }
 
@@ -72,9 +83,10 @@ public:
 
     std::lock_guard<std::mutex> lock(servers_status_mtx);
 
-    auto server = servers_status.FindServer(server_info->cluster_id(), server_info->server_id());
-    if (server != nullptr)
+    auto servers = servers_status.FindServer(server_info->cluster_id(), server_info->server_id());
+    if (!servers.empty())
     {
+      auto server = servers[0];
       server->last_heartbeat = std::chrono::steady_clock::now();
       server->is_active = true;
     }
@@ -96,10 +108,11 @@ public:
     std::lock_guard<std::mutex> lock(servers_status_mtx);
 
     uint64_t cluster_id = (request->client_id() - 1) % 3 + 1;
-    auto server = servers_status.FindServer(cluster_id, 1);
+    auto servers = servers_status.FindServer(cluster_id);
 
-    if (server != nullptr and server->is_active)
+    if (!servers.empty() and servers[0]->is_active)
     {
+      auto server = servers[0];
       // check the current status of the server
       grpc::ChannelArguments ch_args;
       ch_args.SetInt(GRPC_ARG_ENABLE_HTTP_PROXY, 0);
