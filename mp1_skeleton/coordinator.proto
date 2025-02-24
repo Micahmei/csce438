@@ -1,61 +1,39 @@
 syntax = "proto3";
 package csce438;
 
-// ------------------------------------------------------------
-// The coordinator service definition
-// These are the different functionalities exposed by service
-// ------------------------------------------------------------
-
-//Init and Heartbeat potentially redundant
-service CoordService{
-    rpc Heartbeat (ServerInfo) returns (Confirmation) {}
-    rpc GetServer (ID) returns (ServerInfo) {}
-
-    // 修改 Status 为 CoordStatus，避免 gRPC 命名冲突
-    rpc create (PathAndData) returns (CoordStatus) {}
-    rpc exists (Path) returns (CoordStatus) {}
+message ServerInfo {
+    uint64 cluster_id = 1;
+    uint64 server_id = 2;   // Server identifier
+    string server_ip = 3;   // Server IP address
+    string server_port = 4; // Server port
 }
 
-// server info message definition
-message ServerInfo{
-    int32 serverID = 1;
-    string hostname = 2;
-    string port = 3;
-    string type = 4;
+message Confirmation {
+    bool success = 1;       // Indicates if the operation was successful
+    string message = 2;     // Additional information
 }
 
-// confirmation message definition
-message Confirmation{
-    bool status = 1;
+message Status {
+    bool exists = 1;        // Indicates if the path exists or not
+    string message = 2;     // Any additional message or error info
 }
 
-// id message definition
-message ID{
-    int32 id = 1;
+message PathAndData {
+    string path = 1;        // Path to the znode
+    string data = 2;        // Data to be stored in the znode
 }
 
-// ServerList definition
-message ServerList{
-    repeated string serverList = 1; 
+message Path {
+    string path = 1;        // Path to check
 }
 
-// SynchService definition
-message SynchService{
-    string test = 1;
+message ID {
+    uint64 client_id = 1;   // Client ID
 }
 
-// PathAndData definition for rpc create
-message PathAndData{
-    string path = 1;
-    string data = 2;
-}
-
-// path definition for rpc exists
-message Path{
-    string path = 1;
-}
-
-// 修改 Status 为 CoordStatus
-message CoordStatus {
-    bool status = 1;
+service Coordinator {
+    rpc Heartbeat (ServerInfo) returns (Confirmation);   // Heartbeat from server to coordinator
+    rpc GetServer (ID) returns (ServerInfo);              // Get server info for a client
+    rpc create (PathAndData) returns (Status);           // Create path in znode
+    rpc exists (Path) returns (Status);                  // Check if path exists
 }
