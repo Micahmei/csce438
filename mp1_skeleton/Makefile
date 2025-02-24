@@ -22,27 +22,28 @@ PROTOBUF_ABSL_DEPS = absl_absl_check absl_absl_log absl_algorithm absl_base absl
 # tweak the list of libraries to link against to fix the build.
 PROTOBUF_UTF8_RANGE_LINK_LIBS = -lutf8_validity
 
-export PKG_CONFIG_PATH = /home/duski/Downloads/csce438-spring2025-main/grpc/cmake/build/lib/pkgconfig:
+export PKG_CONFIG_PATH = /home/csce438/.local/lib/pkgconfig:/home/csce438/grpc/third_party/re2:/home/csce438/.local/share/pkgconfig/
 
 HOST_SYSTEM = $(shell uname | cut -f 1 -d_)
 SYSTEM ?= $(HOST_SYSTEM)
 CXX = g++
 # CPPFLAGS += `pkg-config --cflags protobuf grpc absl_flags absl_flags_parse`
-CPPFLAGS += -I/usr/local/include -Wnon-virtual-dtor -DNOMINMAX
-CXXFLAGS += -std=c++17
+CPPFLAGS += `pkg-config --cflags protobuf grpc `
+CXXFLAGS += -std=c++17 -g
 
 ifeq ($(SYSTEM),Darwin)
-LDFLAGS += -L/usr/local/lib -L/home/duski/Downloads/csce438-spring2025-main/grpc/cmake/build \
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
            -pthread\
            -lgrpc++_reflection\
            -ldl
 else
-LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++ absl_flags absl_flags_parse $(PROTOBUF_ABSL_DEPS)`\
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
            -pthread\
            -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed\
            -ldl -lglog
+endif
 endif
 PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
