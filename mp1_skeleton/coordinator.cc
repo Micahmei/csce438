@@ -78,6 +78,8 @@ public:
   // recieve the heartbeat package from server
   Status Heartbeat(ServerContext *context, const ServerInfo *server_info, Confirmation *confirmation) override
   {
+    // Your code here
+
     std::cout << "Received Heartbeat from server: " << server_info->server_id()
               << "  <" << server_info->server_ip() + ":" + server_info->server_port() << ">" << std::endl;
 
@@ -102,8 +104,13 @@ public:
     return Status::OK;
   }
 
+  // function returns the server information for requested client id
+  // this function assumes there are always 3 clusters and has math
+  // hardcoded to represent this.
   Status GetServer(ServerContext *context, const ID *request, ServerInfo *response) override
   {
+    // Your code here
+
     std::cout << "connect request from client: " << request->client_id() << std::endl;
     std::lock_guard<std::mutex> lock(servers_status_mtx);
 
@@ -142,61 +149,27 @@ public:
     return Status::OK;
   }
 
-  void CheckForTimeout()
-  {
-
-    while (true)
-    {
-      std::this_thread::sleep_for(std::chrono::seconds(5)); // Check every 5 seconds
-
-      std::lock_guard<std::mutex> lock(servers_status_mtx);
-
-      for (auto &cluster_entry : servers_status.clusters)
-      {
-        for (auto &server_entry : cluster_entry.second)
-        {
-          auto &server = server_entry.second;
-          auto duration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - server.last_heartbeat);
-          // std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(server.last_heartbeat.time_since_epoch()).count() << "  " << duration.count() << std::endl;
-
-          if (duration > heartbeat_timeout)
-          {
-            if (server.is_active)
-            {
-              server.is_active = false;
-              std::cout << "Server " << server_entry.first << " in cluster " << cluster_entry.first
-                        << " is offline (Heartbeat timeout)" << std::endl;
-            }
-          }
-          else
-          {
-            if (!server.is_active)
-            {
-              server.is_active = true;
-              std::cout << "Server " << server_entry.first << " in cluster " << cluster_entry.first
-                        << " is online again" << std::endl;
-            }
-          }
-        }
-      }
-    }
-  }
+  void CheckHeartbeat();
 };
 
-void RunCoordinatorServer(const std::string &address)
+void RunServer(const std::string &address)
 {
   CoordinatorServiceImpl service;
-
+  // start thread to check heartbeats
   std::thread timeout_check_thread(
       [&service]()
-      { service.CheckForTimeout(); });
-
+      { service.CheckHeartbeat(); });
+  // grpc::EnableDefaultHealthCheckService(true);
+  // grpc::reflection::InitProtoReflectionServerBuilderPlugin();
   ServerBuilder builder;
+  // Listen on the given address without any authentication mechanism.
   builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+  // Register "service" as the instance through which we'll communicate with
+  // clients. In this case it corresponds to an *synchronous* service.
   builder.RegisterService(&service);
+  // Finally assemble the server.
   std::unique_ptr<Server> server(builder.BuildAndStart());
-
-  std::cout << "Coordinator server listening on " << address << std::endl;
+  std::cout << "Server listening on " << address << std::endl;
 
   server->Wait();
 }
@@ -204,20 +177,67 @@ void RunCoordinatorServer(const std::string &address)
 int main(int argc, char **argv)
 {
   std::string port = "9090";
-  for (int i = 1; i < argc; ++i)
+  int opt = 0;
+  while ((opt = getopt(argc, argv, "p:")) != -1)
   {
-    if (std::string(argv[i]) == "-p" && i + 1 < argc)
+    switch (opt)
     {
-      port = argv[i + 1];
-      ++i;
-    }
-    else
-    {
+    case 'p':
+      port = optarg;
+      break;
+    default:
       std::cerr << "Invalid Command Line Argument\n";
-      return 0;
     }
   }
   std::string server_address = "0.0.0.0:" + port;
-  RunCoordinatorServer(server_address);
+  RunServer(server_address);
   return 0;
+}
+
+void CoordinatorServiceImpl::CheckHeartbeat()
+{
+  while (true)
+  {
+    // check servers for heartbeat > 10
+    // if true turn missed heartbeat = true
+    //  Your code below
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    std::lock_guard<std::mutex> lock(servers_status_mtx);
+
+    // iterating through the clusters vector of vectors of znodes
+    for (auto &cluster_entry : servers_status.clusters)
+    {
+      for (auto &server_entry : cluster_entry.second)
+      {
+        auto &server = server_entry.second;
+        auto duration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - server.last_heartbeat);
+        // std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(server.last_heartbeat.time_since_epoch()).count() << "  " << duration.count() << std::endl;
+
+        if (duration > heartbeat_timeout)
+        {
+          if (server.is_active)
+          {
+            server.is_active = false;
+            std::cout << "Server " << server_entry.first << " in cluster " << cluster_entry.first
+                      << " is offline (Heartbeat timeout)" << std::endl;
+          }
+        }
+        else
+        {
+          if (!server.is_active)
+          {
+            server.is_active = true;
+            std::cout << "Server " << server_entry.first << " in cluster " << cluster_entry.first
+                      << " is online again" << std::endl;
+          }
+        }
+      }
+    }
+  }
+}
+
+std::time_t getTimeNow()
+{
+  return std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 }
