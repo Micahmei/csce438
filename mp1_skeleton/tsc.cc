@@ -213,7 +213,20 @@ IReply Client::processCommand(std::string &input)
   }
   else if (command == "TIMELINE")
   {
-    processTimeline();
+    ClientContext context;
+    csce438::Request request;
+    request.set_username("x");
+    csce438::Reply reply;
+    auto status = stub_->CheckConnection(&context, request, &reply);
+    ire.grpc_status = status;
+    if (status.ok())
+    {
+      ire.comm_status = SUCCESS;
+    }
+    else
+    {
+      ire.comm_status = FAILURE_UNKNOWN;
+    }
   }
   else
   {
@@ -393,9 +406,9 @@ void Client::Timeline(const std::string &username)
   /***
   YOUR CODE HERE
   ***/
+
   ClientContext context;
-  std::shared_ptr<ClientReaderWriter<Message, Message>> stream(
-      stub_->Timeline(&context));
+  std::shared_ptr<ClientReaderWriter<Message, Message>> stream(stub_->Timeline(&context));
 
   // send username
   Message init_msg;
