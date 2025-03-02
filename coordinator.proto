@@ -1,0 +1,50 @@
+syntax = "proto3";
+package csce438;
+import "google/protobuf/timestamp.proto";
+
+// ------------------------------------------------------------
+// The coordinator service definition
+// These are the different functionalities exposed by service
+// ------------------------------------------------------------
+
+
+//Init and Heartbeat potentially redundant
+service Coordinator {
+    rpc Heartbeat (ServerInfo) returns (Confirmation);   // Heartbeat from server to coordinator
+    rpc GetServer (ID) returns (ServerInfo);              // Get server info for a client
+    rpc create (PathAndData) returns (Status);           // Create path in znode
+    rpc exists (Path) returns (Status);                  // Check if path exists
+}
+
+//server info message definition
+message ServerInfo {
+    uint64 cluster_id = 1;
+    uint64 server_id = 2;   // Server identifier
+    string server_ip = 3;   // Server IP address
+    string server_port = 4; // Server port
+}
+
+// TODO: check which extra stuff in the coordinator.proto you dont need
+message Confirmation {
+    bool success = 1;       // Indicates if the operation was successful
+    string message = 2;     // Additional information
+}
+
+message Status {
+    bool exists = 1;        // Indicates if the path exists or not
+    string message = 2;     // Any additional message or error info
+}
+// PathAndData definition for rpc create
+message PathAndData {
+    string path = 1;        // Path to the znode
+    string data = 2;        // Data to be stored in the znode
+}
+// path definition for rpc exists
+message Path {
+    string path = 1;        // Path to check
+}
+
+// status definition for rpc exists and create
+message ID {
+    uint64 client_id = 1;   // Client ID
+}
