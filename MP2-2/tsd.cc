@@ -1,161 +1,203 @@
-#include <iostream>
+#include <ctime>
 #include <fstream>
+#include <filesystem>
+#include <iostream>
+#include <algorithm>
+#include <memory>
 #include <string>
+#include <stdlib.h>
+#include <unistd.h>
 #include <thread>
-#include <chrono>
-#include <grpcpp/grpcpp.h>
+#include <grpc++/grpc++.h>
+#include <google/protobuf/util/time_util.h>
+#include "sns.grpc.pb.h"
 #include "coordinator.grpc.pb.h"
-#include "server.grpc.pb.h" // 你需要定义 Master-to-Slave proto
-#include <semaphore.h>
-#include <fcntl.h>
+#include "slave.grpc.pb.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
+using grpc::ServerReaderWriter;
 using grpc::Status;
+using grpc::Channel;
+using grpc::ClientContext;
 
-using sns::ServerService;
-using sns::SyncRequest;
-using sns::SyncReply;
+using csce438::SNSService;
+using csce438::Coordinator;
+using csce438::MirrorService;
+using csce438::MirrorRequest;
+using csce438::MirrorPostRequest;
+using csce438::MirrorReply;
+using csce438::Request;
+using csce438::Reply;
+using csce438::Message;
+using csce438::ListReply;
+using csce438::ServerInfo;
+using csce438::Confirmation;
 
-std::string base_dir;
-bool is_master = false;
-std::string coordinator_ip;
-int coordinator_port;
-int server_port;
-int cluster_id;
-int server_id;
-std::string slave_ip = "localhost";
-int slave_port = -1;
+struct Client {
+    std::string username;
+    ServerReaderWriter<Message, Message>* stream = nullptr;
+    std::vector<Client*> followers;
+    std::vector<Client*> following;
+};
 
-// named semaphore name
-std::string sem_name = "/timeline_sem";
+std::vector<Client*> client_db;
 
-// write file with semaphore protection
-void writeToFile(const std::string& filename, const std::string& content) {
-    sem_t* sem = sem_open(sem_name.c_str(), O_CREAT, 0644, 1);
-    sem_wait(sem);
-
-    std::ofstream file(filename, std::ios::app);
-    if (file.is_open()) {
-        file << content << std::endl;
-        file.close();
+Client* getClient(const std::string& name) {
+    for (auto* c : client_db) {
+        if (c->username == name) return c;
     }
-
-    sem_post(sem);
-    sem_close(sem);
+    return nullptr;
 }
 
-class ServerServiceImpl final : public ServerService::Service {
-    // Slave 接口：接收 Master 的同步请求
-    Status Sync(ServerContext* context, const SyncRequest* request, SyncReply* reply) override {
-        std::string file = request->filename();
-        std::string data = request->data();
+class SNSServiceImpl final : public SNSService::Service {
+    std::unique_ptr<Coordinator::Stub> coord_stub;
+    std::unique_ptr<MirrorService::Stub> slave_stub;
+    bool is_master;
+    int cluster_id, server_id;
+    std::string port;
 
-        std::string fullpath = base_dir + "/" + file;
-        writeToFile(fullpath, data);
+public:
+    SNSServiceImpl(std::shared_ptr<Channel> coord_channel,
+                   std::shared_ptr<Channel> slave_channel,
+                   bool is_master_,
+                   int cluster_id_,
+                   int server_id_,
+                   std::string port_)
+        : coord_stub(Coordinator::NewStub(coord_channel)),
+          slave_stub(MirrorService::NewStub(slave_channel)),
+          is_master(is_master_),
+          cluster_id(cluster_id_),
+          server_id(server_id_),
+          port(port_) {}
 
-        reply->set_status("OK");
+    void startHeartbeat() {
+        std::thread([this]() {
+            while (true) {
+                ServerInfo info;
+                info.set_serverid(server_id);
+                info.set_clusterid(cluster_id);
+                info.set_hostname("127.0.0.1");
+                info.set_port(port);
+                info.set_type("server");
+                info.set_ismaster(is_master);
+                Confirmation conf;
+                ClientContext ctx;
+                coord_stub->Heartbeat(&ctx, info, &conf);
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+            }
+        }).detach();
+    }
+
+    Status Login(ServerContext* ctx, const Request* req, Reply* reply) override {
+        if (!is_master) return Status::OK;
+
+        if (getClient(req->username()) != nullptr) {
+            reply->set_msg("user already exists");
+        } else {
+            Client* c = new Client{req->username()};
+            client_db.push_back(c);
+            reply->set_msg("login successful");
+
+            MirrorRequest mreq;
+            mreq.set_username(req->username());
+            mreq.set_argument("");
+            MirrorReply mrep;
+            ClientContext ctx;
+            slave_stub->MirrorLogin(&ctx, mreq, &mrep);
+        }
+        return Status::OK;
+    }
+
+    Status Follow(ServerContext* ctx, const Request* req, Reply* reply) override {
+        if (!is_master) return Status::OK;
+
+        Client* u = getClient(req->username());
+        Client* target = getClient(req->arguments(0));
+        if (!u || !target || u == target) {
+            reply->set_msg("cannot follow");
+            return Status::OK;
+        }
+        for (auto* f : u->following) {
+            if (f == target) {
+                reply->set_msg("already following");
+                return Status::OK;
+            }
+        }
+        u->following.push_back(target);
+        target->followers.push_back(u);
+        reply->set_msg("followed");
+
+        MirrorRequest mreq;
+        mreq.set_username(req->username());
+        mreq.set_argument(req->arguments(0));
+        MirrorReply mrep;
+        ClientContext ctx;
+        slave_stub->MirrorFollow(&ctx, mreq, &mrep);
+        return Status::OK;
+    }
+
+    Status Timeline(ServerContext* context, ServerReaderWriter<Message, Message>* stream) override {
+        Message init;
+        if (!stream->Read(&init)) return Status::CANCELLED;
+        Client* user = getClient(init.username());
+        if (!user) return Status::CANCELLED;
+        user->stream = stream;
+
+        while (stream->Read(&init)) {
+            std::string timestamp = google::protobuf::util::TimeUtil::ToString(init.timestamp());
+            std::string msg = init.msg();
+
+            for (Client* follower : user->followers) {
+                if (follower->stream) {
+                    follower->stream->Write(init);
+                }
+            }
+
+            MirrorPostRequest post;
+            post.set_username(init.username());
+            post.set_post(msg);
+            post.set_timestamp(timestamp);
+            MirrorReply mrep;
+            ClientContext ctx;
+            slave_stub->MirrorPost(&ctx, post, &mrep);
+        }
+
+        user->stream = nullptr;
         return Status::OK;
     }
 };
 
-// Master 向 Slave 发送同步调用
-void sendToSlave(const std::string& file, const std::string& data) {
-    grpc::ChannelArguments ch_args;
-    auto channel = grpc::CreateCustomChannel(slave_ip + ":" + std::to_string(slave_port), grpc::InsecureChannelCredentials(), ch_args);
-    std::unique_ptr<ServerService::Stub> stub = ServerService::NewStub(channel);
-
-    SyncRequest request;
-    SyncReply reply;
-    grpc::ClientContext context;
-
-    request.set_filename(file);
-    request.set_data(data);
-
-    Status status = stub->Sync(&context, request, &reply);
-    if (!status.ok()) {
-        std::cerr << "Failed to sync with slave: " << status.error_message() << std::endl;
-    }
-}
-
-// 心跳线程：每 5 秒发送一次
-void heartbeatThread() {
-    auto stub = sns::Coordinator::NewStub(grpc::CreateChannel(coordinator_ip + ":" + std::to_string(coordinator_port), grpc::InsecureChannelCredentials()));
-    while (true) {
-        sns::HeartbeatRequest req;
-        sns::HeartbeatReply rep;
-        grpc::ClientContext ctx;
-
-        req.set_clusterid(cluster_id);
-        req.set_serverid(server_id);
-
-        stub->Heartbeat(&ctx, req, &rep);
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-    }
-}
-
-// 注册到 Coordinator
-void registerWithCoordinator() {
-    auto stub = sns::Coordinator::NewStub(grpc::CreateChannel(coordinator_ip + ":" + std::to_string(coordinator_port), grpc::InsecureChannelCredentials()));
-    sns::RegisterRequest req;
-    sns::RegisterReply rep;
-    grpc::ClientContext ctx;
-
-    req.set_clusterid(cluster_id);
-    req.set_serverid(server_id);
-    req.set_ip("localhost");
-    req.set_port(server_port);
-    req.set_ismaster(is_master);
-
-    stub->Register(&ctx, req, &rep);
-}
-
-// 主逻辑：模拟处理客户端命令并同步给 Slave
-void simulatePost(const std::string& user, const std::string& content) {
-    std::string timeline_file = user + "_timeline.txt";
-    writeToFile(base_dir + "/" + timeline_file, content);
-    if (is_master && slave_port > 0) {
-        sendToSlave(timeline_file, content);
-    }
-}
-
-void runServer() {
-    std::string server_address = "0.0.0.0:" + std::to_string(server_port);
-    ServerServiceImpl service;
-
-    ServerBuilder builder;
-    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-    builder.RegisterService(&service);
-
-    std::unique_ptr<Server> server(builder.BuildAndStart());
-    std::cout << (is_master ? "[Master]" : "[Slave]") << " Server running at " << server_address << std::endl;
-    server->Wait();
-}
-
 int main(int argc, char** argv) {
-    if (argc != 9) {
-        std::cerr << "Usage: ./tsd -c <clusterId> -s <serverId> -h <coordIP> -k <coordPort> -p <serverPort>" << std::endl;
-        return 1;
+    int cluster = 1, sid = 1;
+    std::string port = "10000", coord_ip = "127.0.0.1", coord_port = "9090";
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "-c") cluster = std::stoi(argv[++i]);
+        else if (arg == "-s") sid = std::stoi(argv[++i]);
+        else if (arg == "-p") port = argv[++i];
+        else if (arg == "-h") coord_ip = argv[++i];
+        else if (arg == "-k") coord_port = argv[++i];
     }
 
-    cluster_id = std::stoi(argv[2]);
-    server_id = std::stoi(argv[4]);
-    coordinator_ip = argv[6];
-    coordinator_port = std::stoi(argv[8]);
-    server_port = std::stoi(argv[10]);
+    bool is_master = (sid == 1);
+    std::string coord_addr = coord_ip + ":" + coord_port;
+    std::string slave_addr = "127.0.0.1:" + (is_master ? "10001" : "10000");
 
-    is_master = (server_id == 1);
-    base_dir = "./cluster" + std::to_string(cluster_id) + "/" + std::to_string(server_id);
+    auto coord_channel = grpc::CreateChannel(coord_addr, grpc::InsecureChannelCredentials());
+    auto slave_channel = grpc::CreateChannel(slave_addr, grpc::InsecureChannelCredentials());
 
-    if (is_master) {
-        slave_port = server_port + 1; // 你可以自定义
-    }
+    SNSServiceImpl service(coord_channel, slave_channel, is_master, cluster, sid, port);
+    service.startHeartbeat();
 
-    registerWithCoordinator();
-    std::thread heartbeat(heartbeatThread);
-    heartbeat.detach();
-
-    runServer();
+    std::string addr = "0.0.0.0:" + port;
+    ServerBuilder builder;
+    builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
+    builder.RegisterService(&service);
+    std::unique_ptr<Server> server(builder.BuildAndStart());
+    std::cout << "Server listening on " << addr << (is_master ? " [MASTER]" : " [SLAVE]") << std::endl;
+    server->Wait();
     return 0;
 }
