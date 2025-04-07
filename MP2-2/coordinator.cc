@@ -1,119 +1,152 @@
 #include <iostream>
-#include <map>
-#include <thread>
-#include <chrono>
+#include <unordered_map>
 #include <mutex>
-#include <grpcpp/grpcpp.h>
+#include <chrono>
+#include <thread>
+#include <string>
+#include <grpc++/grpc++.h>
 #include "coordinator.grpc.pb.h"
+#include "sns.grpc.pb.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
-using sns::Coordinator;
-using sns::HeartbeatRequest;
-using sns::HeartbeatReply;
-using sns::RegisterRequest;
-using sns::RegisterReply;
-using sns::ServerInfoRequest;
-using sns::ServerInfoReply;
+using grpc::ClientContext;
 
-std::mutex mtx;
+using csce438::Coordinator;
+using csce438::CoordService;
+using csce438::ServerInfo;
+using csce438::Confirmation;
+using csce438::ID;
+using csce438::ServerList;
 
-// serverInfo: IP, port, last heartbeat time, status
-struct ServerInfo {
+struct ServerEntry {
     std::string ip;
-    int port;
-    std::chrono::time_point<std::chrono::steady_clock> last_heartbeat;
+    std::string port;
+    std::string type; // "server" or "follower"
+    int cluster_id;
+    int server_id;
     bool is_master;
-    bool is_alive;
+    bool is_active;
+    std::chrono::steady_clock::time_point last_heartbeat;
 };
 
-std::map<int, std::map<int, ServerInfo>> server_table; // clusterID -> serverID -> info
+class CoordinatorServiceImpl final : public CoordService::Service {
+private:
+    std::mutex mtx;
+    std::vector<ServerEntry> servers;
 
-class CoordinatorServiceImpl final : public Coordinator::Service {
+    std::chrono::seconds heartbeatTimeout = std::chrono::seconds(10);
+
 public:
-    Status Register(ServerContext* context, const RegisterRequest* request, RegisterReply* reply) override {
+    // Heartbeat RPC: Server/Synchronizer use this to register/update
+    Status Heartbeat(ServerContext* context, const ServerInfo* request, Confirmation* reply) override {
         std::lock_guard<std::mutex> lock(mtx);
-        int cluster = request->clusterid();
-        int server = request->serverid();
-        std::string ip = request->ip();
-        int port = request->port();
-        bool is_master = request->ismaster();
 
-        server_table[cluster][server] = {ip, port, std::chrono::steady_clock::now(), is_master, true};
-
-        std::cout << "[Register] Server (Cluster " << cluster << ", ID " << server << ") at "
-                  << ip << ":" << port << " registered as " << (is_master ? "Master" : "Slave") << std::endl;
-
-        reply->set_status("OK");
-        return Status::OK;
-    }
-
-    Status Heartbeat(ServerContext* context, const HeartbeatRequest* request, HeartbeatReply* reply) override {
-        std::lock_guard<std::mutex> lock(mtx);
-        int cluster = request->clusterid();
-        int server = request->serverid();
-
-        if (server_table.count(cluster) && server_table[cluster].count(server)) {
-            server_table[cluster][server].last_heartbeat = std::chrono::steady_clock::now();
-            server_table[cluster][server].is_alive = true;
-            reply->set_status("OK");
-        } else {
-            reply->set_status("NOT_REGISTERED");
-        }
-
-        return Status::OK;
-    }
-
-    Status GetServer(ServerContext* context, const ServerInfoRequest* request, ServerInfoReply* reply) override {
-        std::lock_guard<std::mutex> lock(mtx);
-        int client_id = request->clientid();
-        int cluster = ((client_id - 1) % 3) + 1;
-
-        for (auto& [server_id, info] : server_table[cluster]) {
-            if (info.is_master && info.is_alive) {
-                reply->set_ip(info.ip);
-                reply->set_port(info.port);
-                reply->set_clusterid(cluster);
-                reply->set_status("OK");
-                return Status::OK;
+        bool found = false;
+        for (auto& s : servers) {
+            if (s.server_id == request->serverid() &&
+                s.cluster_id == request->clusterid() &&
+                s.type == request->type()) {
+                s.last_heartbeat = std::chrono::steady_clock::now();
+                s.is_active = true;
+                found = true;
+                break;
             }
         }
 
-        reply->set_status("NO_ACTIVE_MASTER");
+        if (!found) {
+            servers.push_back({
+                request->hostname(),
+                request->port(),
+                request->type(),
+                request->clusterid(),
+                request->serverid(),
+                request->type() == "server" ? request->ismaster() : false,
+                true,
+                std::chrono::steady_clock::now()
+            });
+        }
+
+        reply->set_status(true);
         return Status::OK;
     }
 
-    // Synchronizer calls this to find the cluster ID of a client
-    Status GetClusterForClient(ServerContext* context, const ServerInfoRequest* request, ServerInfoReply* reply) override {
-        int client_id = request->clientid();
-        int cluster = ((client_id - 1) % 3) + 1;
+    // For clients: returns available Master server
+    Status GetServer(ServerContext* context, const ID* request, ServerInfo* reply) override {
+        std::lock_guard<std::mutex> lock(mtx);
+        int cluster_id = ((request->id() - 1) % 3) + 1;
 
-        reply->set_clusterid(cluster);
-        reply->set_status("OK");
+        ServerEntry* master = nullptr;
+        ServerEntry* slave = nullptr;
+
+        for (auto& s : servers) {
+            if (s.cluster_id == cluster_id && s.type == "server") {
+                if (s.is_master && s.is_active)
+                    master = &s;
+                else if (!s.is_master && s.is_active)
+                    slave = &s;
+            }
+        }
+
+        if (master) {
+            reply->set_hostname(master->ip);
+            reply->set_port(master->port);
+            reply->set_serverid(master->server_id);
+            reply->set_clusterid(master->cluster_id);
+            reply->set_ismaster(true);
+        } else if (slave) {
+            reply->set_hostname(slave->ip);
+            reply->set_port(slave->port);
+            reply->set_serverid(slave->server_id);
+            reply->set_clusterid(slave->cluster_id);
+            reply->set_ismaster(true); // Slave now acts as master
+        } else {
+            reply->set_serverid(0); // no server
+        }
+
         return Status::OK;
     }
 
-    void MonitorServers() {
+    // For synchronizers: get list of all follower synchronizer servers
+    Status GetAllFollowerServers(ServerContext* context, const ID* request, ServerList* reply) override {
+        std::lock_guard<std::mutex> lock(mtx);
+        for (auto& s : servers) {
+            if (s.type == "follower" && s.is_active) {
+                reply->add_serverid(s.server_id);
+                reply->add_hostname(s.ip);
+                reply->add_port(s.port);
+                reply->add_type(s.type);
+            }
+        }
+        return Status::OK;
+    }
+
+    // Periodic checker for dead servers (Master failover)
+    void MonitorHeartbeats() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(5));
             std::lock_guard<std::mutex> lock(mtx);
+
             auto now = std::chrono::steady_clock::now();
+            for (auto& s : servers) {
+                if (s.type == "server") {
+                    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - s.last_heartbeat);
+                    if (duration > heartbeatTimeout && s.is_active) {
+                        std::cout << "[FAILOVER] Server " << s.server_id << " in cluster "
+                                  << s.cluster_id << " timed out. Marking inactive.\n";
+                        s.is_active = false;
 
-            for (auto& [cluster, servers] : server_table) {
-                for (auto& [sid, info] : servers) {
-                    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - info.last_heartbeat).count();
-                    if (duration > 10 && info.is_alive) {
-                        std::cout << "[FAILURE DETECTED] Cluster " << cluster << " Server " << sid << " timed out." << std::endl;
-                        info.is_alive = false;
-
-                        // Promote Slave if Master failed
-                        if (info.is_master) {
-                            for (auto& [alt_sid, alt_info] : servers) {
-                                if (!alt_info.is_master && alt_info.is_alive) {
-                                    alt_info.is_master = true;
-                                    std::cout << "-> Promoted Server " << alt_sid << " to Master in Cluster " << cluster << std::endl;
+                        // promote slave if needed
+                        if (s.is_master) {
+                            for (auto& candidate : servers) {
+                                if (candidate.cluster_id == s.cluster_id &&
+                                    candidate.type == "server" &&
+                                    !candidate.is_master) {
+                                    candidate.is_master = true;
+                                    std::cout << "[PROMOTE] Slave " << candidate.server_id
+                                              << " promoted to Master for cluster " << candidate.cluster_id << "\n";
                                     break;
                                 }
                             }
@@ -125,30 +158,32 @@ public:
     }
 };
 
-void RunServer(int port) {
-    std::string server_address = "0.0.0.0:" + std::to_string(port);
+void RunCoordinator(const std::string& port) {
+    std::string addr = "0.0.0.0:" + port;
     CoordinatorServiceImpl service;
 
+    std::thread monitor_thread(&CoordinatorServiceImpl::MonitorHeartbeats, &service);
+
     ServerBuilder builder;
-    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+    builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
 
     std::unique_ptr<Server> server(builder.BuildAndStart());
-    std::cout << "[Coordinator] Listening on " << server_address << std::endl;
-
-    std::thread monitor_thread(&CoordinatorServiceImpl::MonitorServers, &service);
-    monitor_thread.detach();
-
+    std::cout << "Coordinator running at " << addr << std::endl;
     server->Wait();
+    monitor_thread.join();
 }
 
 int main(int argc, char** argv) {
-    if (argc != 3 || std::string(argv[1]) != "-p") {
-        std::cerr << "Usage: ./coordinator -p <port>" << std::endl;
-        return 1;
+    std::string port = "9090";
+    int opt = 0;
+    while ((opt = getopt(argc, argv, "p:")) != -1) {
+        switch (opt) {
+        case 'p': port = optarg; break;
+        default: std::cerr << "Usage: ./coordinator -p <port>\n"; return 1;
+        }
     }
 
-    int port = std::stoi(argv[2]);
-    RunServer(port);
+    RunCoordinator(port);
     return 0;
 }
