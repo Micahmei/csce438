@@ -32,11 +32,8 @@ CPPFLAGS += -I/usr/local/include -Wnon-virtual-dtor -DNOMINMAX
 CXXFLAGS += -std=c++17
 
 ifeq ($(SYSTEM),Darwin)
-LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
-           $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
-           -pthread\
-           -lgrpc++_reflection\
-           -ldl -lrabbitmq  -ljsoncpp
+LDFLAGS += -L/home/csce438/.local/lib -L/usr/local/lib `pkg-config --libs --static protobuf grpc++` \
+           -lutf8_validity -lpthread -ldl -lglog -lgrpc++_reflection
 else
 LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
