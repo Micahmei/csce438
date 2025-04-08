@@ -33,23 +33,22 @@ CPPFLAGS += `pkg-config --cflags protobuf grpc `
 CXXFLAGS += -std=c++17 -g
 
 ifeq ($(SYSTEM),Darwin)
-LDFLAGS += -L/usr/local/lib -L/home/duski/Downloads/csce438-spring2025-main/grpc/cmake/build \
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
            -pthread\
            -lgrpc++_reflection\
-           -ldl -lrabbitmq  -ljsoncpp
+           -ldl -lrabbitmq -ljsoncpp
 else
-LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++ absl_flags absl_flags_parse $(PROTOBUF_ABSL_DEPS)`\
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
            -pthread\
            -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed\
-           -ldl -lglog -lrabbitmq  -ljsoncpp
+           -ldl -lglog -lrabbitmq -ljsoncpp
 endif
+
 PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
-
-#PROTOS_PATH = ../../protos
 PROTOS_PATH = .
 
 vpath %.proto $(PROTOS_PATH)
