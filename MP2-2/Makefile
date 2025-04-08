@@ -40,7 +40,7 @@ PROTOS_PATH = .
 
 vpath %.proto $(PROTOS_PATH)
 
-all: system-check tsc tsd cord sync
+all: system-check tsc tsd coordinator synchronizer
 
 tsc: coordinator.pb.o coordinator.grpc.pb.o client.o sns.pb.o sns.grpc.pb.o tsc.o
 	$(CXX) $^ $(LDFLAGS) -g -o $@
@@ -48,10 +48,10 @@ tsc: coordinator.pb.o coordinator.grpc.pb.o client.o sns.pb.o sns.grpc.pb.o tsc.
 tsd: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o tsd.o
 	$(CXX) $^ $(LDFLAGS) -g -o $@
 
-cord: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o coordinator.o
+coordinator: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o coordinator.o
 	$(CXX) $^ $(LDFLAGS) -g -o $@
 
-sync: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o synchronizer.o
+synchronizer: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o synchronizer.o
 	$(CXX) $^ $(LDFLAGS) -g -o $@
 
 .PRECIOUS: %.grpc.pb.cc
@@ -63,7 +63,7 @@ sync: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o synchronizer
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=. $<
 
 clean:
-	rm -f *~ *.o *.pb.cc *.pb.h tsc tsd cord sync
+	rm -f *~ *.o *.pb.cc *.pb.h tsc tsd coordinator synchronizer
 
 # SYSTEM CHECKS
 
