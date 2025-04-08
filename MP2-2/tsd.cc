@@ -36,8 +36,13 @@
 #include <google/protobuf/timestamp.pb.h>
 #include <google/protobuf/duration.pb.h>
 
+#include <thread>
 #include <fstream>
 #include <filesystem>
+#include <semaphore.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <iostream>
 #include <algorithm>
 #include <memory>
@@ -55,8 +60,6 @@
 
 #include "sns.grpc.pb.h"
 #include "coordinator.grpc.pb.h"
-
-#include "sem_file.h"
 
 using csce438::Confirmation;
 using csce438::CoordService;
@@ -78,6 +81,209 @@ using grpc::ServerReaderWriter;
 using grpc::ServerWriter;
 using grpc::Status;
 
+// Helper function to convert filepath to sem_name
+std::string get_sem_name_from_filepath(const std::string &filepath)
+{
+  std::string sem_name = filepath;
+
+  // If the filepath starts with './', remove it
+  if (sem_name.rfind("./", 0) == 0)
+  {
+    sem_name = sem_name.substr(2); // Remove './'
+  }
+
+  // Replace all '/' with '_' to make it valid for sem_name
+  for (char &c : sem_name)
+  {
+    if (c == '/')
+    {
+      c = '_'; // Replace '/' with '_'
+    }
+  }
+
+  // Add a leading '/' to make it a valid sem_name
+  sem_name = "/" + sem_name;
+
+  return sem_name;
+}
+
+std::vector<std::string> read_users_from_file(const std::string &filename)
+{
+  std::vector<std::string> users;
+  std::ifstream file(filename);
+  if (!file)
+  {
+    return users;
+  }
+
+  std::string semName = get_sem_name_from_filepath(filename);
+  sem_t *fileSem = sem_open(semName.c_str(), O_CREAT, 0644, 1);
+  if (fileSem == SEM_FAILED)
+  {
+    perror("sem_open");
+    return users;
+  }
+
+  if (file.peek() == std::ifstream::traits_type::eof())
+  {
+    sem_close(fileSem);
+    return users;
+  }
+
+  std::string user;
+  while (std::getline(file, user))
+  {
+    if (!user.empty())
+    {
+      users.push_back(user);
+    }
+  }
+
+  sem_close(fileSem);
+  return users;
+}
+
+bool write_new_user(const std::string &filename, const std::string &new_user)
+{
+  std::string semName = get_sem_name_from_filepath(filename);
+  sem_t *fileSem = sem_open(semName.c_str(), O_CREAT, 0644, 1);
+  if (fileSem == SEM_FAILED)
+  {
+    perror("sem_open");
+    return false;
+  }
+
+  sem_wait(fileSem);
+
+  std::ofstream file(filename, std::ios::app);
+  if (!file)
+  {
+    std::cerr << "Failed to open file for writing.\n";
+    sem_post(fileSem);
+    sem_close(fileSem);
+    return false;
+  }
+
+  // 写入新用户到文件
+  file << new_user << std::endl;
+
+  // 关闭文件和信号量
+  file.close();
+  sem_post(fileSem);
+  sem_close(fileSem);
+
+  return true;
+}
+
+void write_follow_time(const std::string &filename, const std::string &follower, const std::string &followee, std::time_t timestamp)
+{
+  std::string sem_name = get_sem_name_from_filepath(filename);
+  sem_t *file_sem = sem_open(sem_name.c_str(), O_CREAT, 0644, 1);
+  if (file_sem == SEM_FAILED)
+  {
+    perror("sem_open");
+    return;
+  }
+
+  sem_wait(file_sem);
+
+  std::ofstream ofs(filename, std::ios::app);
+  if (ofs.is_open())
+  {
+    ofs << follower << " " << followee << " " << timestamp << "\n";
+  }
+  else
+  {
+    std::cerr << "Failed to write to " << filename << "\n";
+  }
+
+  sem_post(file_sem);
+  sem_close(file_sem);
+}
+
+std::unordered_map<std::string, std::unordered_map<std::string, std::time_t>> read_follow_time(const std::string &filename)
+{
+  std::unordered_map<std::string, std::unordered_map<std::string, std::time_t>> follow_times;
+
+  // 获取信号量名称并打开信号量
+  std::string sem_name = get_sem_name_from_filepath(filename);
+  sem_t *file_sem = sem_open(sem_name.c_str(), O_CREAT, 0644, 1);
+  if (file_sem == SEM_FAILED)
+  {
+    perror("sem_open");
+    return follow_times;
+  }
+
+  // 使用信号量加锁
+  sem_wait(file_sem);
+
+  // 打开文件
+  std::ifstream file(filename);
+  if (!file)
+  {
+    std::cerr << "Failed to open file for reading.\n";
+    sem_post(file_sem); // 释放信号量
+    sem_close(file_sem);
+    return follow_times;
+  }
+
+  std::string line;
+  while (std::getline(file, line))
+  {
+    // 解析文件行，假设每行有 3 个部分：follower, followee, timestamp
+    std::string f, fe, ts_str;
+    std::time_t ts;
+
+    // 使用 ',' 作为分隔符，分割字符串
+    size_t first_comma = line.find(',');
+    size_t second_comma = line.find(',', first_comma + 1);
+
+    if (first_comma != std::string::npos && second_comma != std::string::npos)
+    {
+      f = line.substr(0, first_comma);
+      fe = line.substr(first_comma + 1, second_comma - first_comma - 1);
+      ts_str = line.substr(second_comma + 1);
+
+      // 将时间戳字符串转换为时间类型
+      ts = std::stoll(ts_str); // 假设时间戳是以秒为单位的数字
+
+      // 将数据插入到 unordered_map
+      follow_times[f][fe] = ts;
+    }
+  }
+
+  // 关闭文件和信号量
+  file.close();
+  sem_post(file_sem); // 释放信号量
+  sem_close(file_sem);
+
+  return follow_times;
+}
+
+// return local time
+std::time_t iso8601ToTimeT(const std::string &iso8601)
+{
+  std::tm tm = {};
+  std::istringstream ss(iso8601);
+
+  ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+
+  if (ss.fail())
+  {
+    std::cerr << "Error: Failed to parse timestamp: " << iso8601 << std::endl;
+    return 0;
+  }
+
+  return timegm(&tm);
+}
+
+struct Post
+{
+  std::string username;
+  std::string post;
+  std::time_t timestamp;
+};
+
 struct Client
 {
   std::string username;
@@ -89,6 +295,103 @@ struct Client
   bool operator==(const Client &c1) const
   {
     return (username == c1.username);
+  }
+};
+
+class TimelineHandler
+{
+private:
+  std::string username;
+  ServerReaderWriter<Message, Message> *stream;
+  std::vector<std::string> following_users;
+  std::atomic<bool> stop_thread; // 控制线程停止
+  std::string data_dir;
+  std::string follow_time_file;
+
+public:
+  TimelineHandler(const std::string &user, ServerReaderWriter<Message, Message> *stream_,
+                  const std::vector<std::string> &following_users_, const std::string &data_dir_, const std::string &follow_time_file_)
+      : username(user), stream(stream_), following_users(following_users_), data_dir(data_dir_), follow_time_file(follow_time_file_), stop_thread(false) {}
+
+  // 启动定时读取线程
+  void start()
+  {
+    std::thread(&TimelineHandler::readFollowingUsersTimeline, this).detach();
+  }
+
+  // 停止线程
+  void stop()
+  {
+    stop_thread = true;
+  }
+
+  // 读取关注者的 timeline.txt 文件并推送新帖子
+  void readFollowingUsersTimeline()
+  {
+    while (!stop_thread)
+    {
+      // Step 1: 读取用户的 follow_time.txt 文件
+      auto follow_timestamp_map = read_follow_time(follow_time_file);
+
+      // Step 2: 读取关注用户的 timeline.txt，筛选出新帖子
+      std::vector<Post> new_posts;
+      for (const auto &followed_user : following_users)
+      {
+        std::string followed_timeline = data_dir + "/" + followed_user + "_timeline.txt";
+        std::ifstream file(followed_timeline);
+        std::string line, post;
+        while (std::getline(file, line))
+        {
+          if (line.empty() && !post.empty())
+          {
+            std::istringstream post_stream(post);
+            std::string post_username, post_content;
+            std::time_t post_timestamp;
+            while (std::getline(post_stream, line))
+            {
+              if (line[0] == 'T')
+              {
+                post_timestamp = iso8601ToTimeT(line.substr(2));
+              }
+              else if (line[0] == 'U')
+              {
+                post_username = line.substr(2);
+              }
+              else if (line[0] == 'W')
+              {
+                post_content = line.substr(2);
+              }
+            }
+
+            // Step 3: 过滤用户关注后发布的帖子
+            std::time_t follow_timestamp = follow_timestamp_map[username][post_username];
+            if (post_timestamp >= follow_timestamp)
+            {
+              new_posts.push_back({post_username, post_content, post_timestamp});
+            }
+            post.clear();
+          }
+          else
+          {
+            post += line + "\n";
+          }
+        }
+      }
+
+      // Step 4: 推送新帖子到本用户的 stream
+      for (const auto &new_post : new_posts)
+      {
+        Message message;
+        message.set_username(new_post.username);
+        message.set_msg(new_post.post);
+        message.mutable_timestamp()->set_seconds(new_post.timestamp);
+        message.mutable_timestamp()->set_nanos(0);
+        stream->Write(message);
+      }
+
+      // Step 5: 等待一段时间再执行下一次检查（例如每 5 秒检查一次）
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
   }
 };
 
@@ -139,10 +442,10 @@ private:
     **********/
     std::string username = request->username();
 
-    auto all_users = read_users_from_file(data_dir + "/all_users.txt");
-    for (const auto &user : all_users)
+    auto all_users = read_users_from_file(data_dir + "/all_uers.txt");
+    for (const auto &usrname : all_users)
     {
-      list_reply->add_all_users(user);
+      list_reply->add_all_users(username);
     }
 
     auto followers = read_users_from_file(data_dir + "/" + username + "_follower_list.txt");
@@ -170,25 +473,39 @@ private:
       return Status::OK;
     }
 
-    bool followee_exist = find_user_from_file(data_dir + "/all_users.txt", followee_name);
+    auto all_users = read_users_from_file(data_dir + "/all_users.txt");
+    bool followee_exist = false;
+    for (auto &user : all_users)
+    {
+      if (user == followee_name)
+      {
+        followee_exist = true;
+      }
+    }
+
     if (!followee_exist)
     {
       reply->set_msg("followed user no exist");
       return Status::OK;
     }
 
-    bool already_following = find_user_from_file(data_dir + "/" + follower_name + "_following_list.txt", followee_name);
-    if (already_following)
+    auto followers = read_users_from_file(data_dir + "/" + follower_name + "_following_list.txt");
+    for (const auto &following : followers)
     {
-      reply->set_msg("already following user");
-      return Status::OK;
+      if (following == followee_name)
+      {
+        reply->set_msg("already following user");
+        return Status::OK;
+      }
     }
 
     write_new_user(data_dir + "/" + follower_name + "_following_list.txt", followee_name);
     write_new_user(data_dir + "/" + followee_name + "_follower_list.txt", follower_name);
+
     write_follow_time(data_dir + "/follow_time.txt", follower_name, followee_name, std::time(nullptr));
 
     reply->set_msg("followed successful");
+
     return Status::OK;
   }
 
@@ -255,24 +572,38 @@ private:
     **********/
     std::cout << "login request from [" << request->username() << "] ";
     std::string username = request->username();
-    bool user_exist = false;
-    for (Client *c : client_db)
-    {
-      if (c->username == username)
-        user_exist = true;
-    }
-    if (user_exist == false)
-    {
-      std::string users_file = data_dir + "/all_users.txt";
-      write_new_user(users_file, username);
 
-      // if user does not exist in the client_db, add it into client_db
-      std::cout << "new user login" << std::endl;
-      Client *new_client = new Client();
-      new_client->username = username;
-      new_client->connected = true;
-      client_db.push_back(new_client);
-    }
+    // for (Client *c : client_db)
+    // {
+    //   if (c->username == username)
+    //   {
+    //     std::cout << "Login successful" << std::endl;
+    //     reply->set_msg("login successful");
+    //     return Status::OK;
+    //   }
+    // }
+
+    // std::string users_file = data_dir + "/all_users.txt";
+    // auto all_users = read_users_from_file(users_file);
+
+    // bool is_new = true;
+    // for (auto user : all_users)
+    // {
+    //   std::cout << user << std::endl;
+    //   if (user == username)
+    //   {
+    //     is_new = false;
+    //   }
+    // }
+
+    // if (is_new)
+    // {
+    //   write_new_user(users_file, username);
+    // }
+
+    Client *client;
+    client->username = username;
+    client_db.push_back(client);
 
     std::cout << "Login successful" << std::endl;
     reply->set_msg("login successful");
@@ -282,7 +613,7 @@ private:
   Status Timeline(ServerContext *context,
                   ServerReaderWriter<Message, Message> *stream) override
   {
-
+    printf("0");
     /*********
     YOUR CODE HERE
     **********/
@@ -299,112 +630,110 @@ private:
       return Status::CANCELLED;
     }
 
-    // get client of user
-    Client *client = nullptr;
-    for (Client *c : client_db)
+    std::string timeline_file = data_dir + "/" + username + "_timeline.txt";
+
+    auto all_users = read_users_from_file(data_dir + "/all_users.txt");
+
+    printf("1");
+
+    Client *client;
+    bool user_exist = false;
+    for (auto user : all_users)
+    {
+      if (user == username)
+        user_exist = true;
+    }
+    for (auto c : client_db)
     {
       if (c->username == username)
       {
+        user_exist = true;
         client = c;
-        break;
       }
     }
-    if (!client)
+    if (!user_exist)
     {
       return Status::CANCELLED;
     }
 
+    std::string follow_time_file = data_dir + "/follow_time.txt";
+    auto follow_timestamp_map = read_follow_time(follow_time_file);
+
+    printf("2");
+
     auto following_users = read_users_from_file(data_dir + "/" + username + "_following_list.txt");
-    auto follow_time_map = read_follow_time(data_dir + "/follow_time.txt");
+    auto follower_users = read_users_from_file(data_dir + "/" + username + "_follower_list.txt");
+
+    printf("3");
 
     // read the posts of the followings of the user
-    std::unordered_map<std::string, std::time_t> last_update_times;
     std::vector<Post> history_posts;
-    for (auto following_user : following_users)
+    for (auto followed_user : following_users)
     {
-      auto posts = read_timeline_from_file(data_dir + "/" + following_user + "_timeline.txt");
-      history_posts.insert(history_posts.end(), posts.begin(), posts.end());
+      std::string followed_timeline = data_dir + "/" + followed_user + "_timeline.txt";
+      std::ifstream file(followed_timeline);
+      std::string line, post;
+      int count = 0;
+
+      while (std::getline(file, line))
+      {
+        if (line.empty() && !post.empty())
+        {
+          // parse post
+          std::istringstream post_stream(post);
+          std::string line, post_username, post_content;
+          std::time_t post_timestamp;
+
+          while (std::getline(post_stream, line))
+          {
+            if (line[0] == 'T')
+            {
+              post_timestamp = iso8601ToTimeT(line.substr(2));
+            }
+            else if (line[0] == 'U')
+            {
+              post_username = line.substr(2);
+            }
+            else if (line[0] == 'W')
+            {
+              post_content = line.substr(2);
+            }
+          }
+
+          std::time_t follow_timestamp = follow_timestamp_map[username][post_username];
+          if (post_timestamp >= follow_timestamp)
+          {
+            history_posts.push_back({post_username, post_content, post_timestamp});
+          }
+          post.clear();
+          count++;
+        }
+        else
+        {
+          post += line + "\n";
+        }
+      }
     }
-    std::sort(history_posts.begin(), history_posts.end(),
-              [](const Post &a, const Post &b)
+
+    std::sort(history_posts.begin(), history_posts.end(), [](const Post &a, const Post &b)
               { return a.timestamp > b.timestamp; });
+
     auto n = std::min((size_t)20, history_posts.size());
-    for (int i = n - 1; i >= 0; i--)
+    for (int i = 0; i < n; i++)
     {
       auto post = history_posts[i];
-      if (post.timestamp >= follow_time_map[username][post.username])
-      {
-        last_update_times[post.username] = post.timestamp;
-        Message message;
-        message.set_username(post.username);
-        message.set_msg(post.post);
-        message.mutable_timestamp()->set_seconds(post.timestamp);
-        message.mutable_timestamp()->set_nanos(0);
-        stream->Write(message);
-      }
+      Message message;
+      message.set_username(post.username);
+      message.set_msg(post.post);
+      message.mutable_timestamp()->set_seconds(post.timestamp);
+      message.mutable_timestamp()->set_nanos(0);
+      stream->Write(message);
     }
 
     // allow the user to subscribe to new messages from the followings
     client->stream = stream;
 
-    // use a thread to read the new posts from the following users periodly
-    std::string temp_data_dir = data_dir;
-    bool stop_thread = false;
-    std::thread read_followings_posts_thread(
-        [&temp_data_dir, &username, &stream, &stop_thread, &last_update_times, &follow_time_map]()
-        {
-          while (!stop_thread)
-          {
-            auto following_users = read_users_from_file(temp_data_dir + "/" + username + "_following_list.txt");
-            std::vector<Post> new_posts;
-            for (const auto &following : following_users)
-            {
-              auto posts = read_timeline_from_file(temp_data_dir + "/" + following + "_timeline.txt");
-              new_posts.insert(new_posts.end(), posts.begin(), posts.end());
-            }
-            std::sort(new_posts.begin(), new_posts.end(),
-                      [](const Post &a, const Post &b)
-                      { return a.timestamp < b.timestamp; });
-            for (auto &post : new_posts)
-            {
-              std::time_t last_update_time = follow_time_map[username][post.username];
-              auto it = last_update_times.find(post.username);
-              if (it != last_update_times.end())
-              {
-                last_update_time = it->second;
-              }
-
-              // std::cout << post.timestamp << " " << last_update_time << std::endl;
-              if (post.timestamp > last_update_time)
-              {
-                Message message;
-                message.set_username(post.username);
-                message.set_msg(post.post);
-                message.mutable_timestamp()->set_seconds(post.timestamp);
-                message.mutable_timestamp()->set_nanos(0);
-                try
-                {
-                  if (stream)
-                  {
-                    bool success = stream->Write(message);
-                    if (!success)
-                    {
-                      stop_thread = true;
-                      break;
-                    }
-                  }
-                }
-                catch (const std::exception &e)
-                {
-                  stop_thread = true;
-                  break;
-                }
-                last_update_times[post.username] = post.timestamp;
-              }
-            }
-            std::this_thread::sleep_for(std::chrono::seconds(10));
-          }
-        });
+    TimelineHandler timeline_handler(username, stream, following_users, data_dir, follow_time_file);
 
     // listen the inputs from clients
     while (stream->Read(&msg))
@@ -413,12 +742,20 @@ private:
                              "\nU " + msg.username() +
                              "\nW " + msg.msg() + "\n\n";
 
-      std::string timeline_file = data_dir + "/" + username + "_timeline.txt";
-      write_timeline_to_file(timeline_file, new_post);
+      std::ofstream file(timeline_file, std::ios::app);
+      file << new_post;
+      file.close();
+
+      // send the post to all followers of the user
+      for (Client *follower : client->client_followers)
+      {
+        if (follower->stream)
+        {
+          follower->stream->Write(msg);
+        }
+      }
     }
 
-    stop_thread = true;
-    read_followings_posts_thread.join();
     client->stream = nullptr;
 
     return Status::OK;
