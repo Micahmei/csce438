@@ -1,52 +1,64 @@
 # Hack: utf8_range (which is protobuf's dependency) currently doesn't have a pkgconfig file, so we need to explicitly
 # tweak the list of libraries to link against to fix the build.
 
-export PKG_CONFIG_PATH = /home/csce438/.local/lib/pkgconfig:/usr/local/lib/pkgconfig:/home/csce438/grpc/third_party/re2:/home/csce438/.local/share/pkgconfig
+PROTOBUF_UTF8_RANGE_LINK_LIBS = -lutf8_validity
+
+export PKG_CONFIG_PATH = /home/csce438/.local/lib/pkgconfig:/home/csce438/grpc/third_party/re2:/home/csce438/.local/share/pkgconfig/
 
 
+HOST_SYSTEM = $(shell uname | cut -f 1 -d_)
+SYSTEM ?= $(HOST_SYSTEM)
 CXX = g++
+# CPPFLAGS += `pkg-config --cflags protobuf grpc rabbitmq-c jsoncpp`
+CPPFLAGS += `pkg-config --cflags protobuf grpc `
+CXXFLAGS += -std=c++17 -g
+
+ifeq ($(SYSTEM),Darwin)
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
+           $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
+           -pthread\
+           -lgrpc++_reflection\
+           -ldl -lrabbitmq -ljsoncpp
+else
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
+           $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
+           -pthread\
+           -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed\
+           -ldl -lglog -lrabbitmq -ljsoncpp
+endif
+
 PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
-GRPC_CPP_PLUGIN_PATH = $(shell which $(GRPC_CPP_PLUGIN))
+GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 PROTOS_PATH = .
 
 
-CPPFLAGS += `pkg-config --cflags protobuf grpc`
-CXXFLAGS += -std=c++17 -g
-LDFLAGS += -L/home/csce438/.local/lib -L/usr/local/lib `pkg-config --libs --static protobuf grpc++` \
-           -lutf8_validity -lpthread -ldl -lglog -lgrpc++_reflection
+all: system-check tsc tsd coordinator synchronizer 
 
-
-BINARIES = tsc tsd coordinator
-
-
-all: system-check $(BINARIES)
-
-# tsc
 tsc: client.o coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o tsc.o
-	$(CXX) coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o client.o tsc.o $(LDFLAGS) -o tsc
+	$(CXX) $^ $(LDFLAGS) -g -o $@
 
-# tsd
 tsd: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o tsd.o
-	$(CXX) coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o tsd.o $(LDFLAGS) -o tsd
+	$(CXX) $^ $(LDFLAGS) -g -o $@
 
-# coordinator
-coordinator: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o coordinator.o
-	$(CXX) coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o coordinator.o $(LDFLAGS) -o coordinator
+coordinator: coordinator.pb.o coordinator.grpc.pb.o coordinator.o
+	$(CXX) $^ $(LDFLAGS) -g -o $@
+
+synchronizer: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o synchronizer.o
+	$(CXX) $^ $(LDFLAGS) -g -o $@
 
 
 .PRECIOUS: %.grpc.pb.cc
 %.grpc.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --grpc_out=. --plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN_PATH) $<
 
-
 .PRECIOUS: %.pb.cc
 %.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=. $<
 
-
 clean:
-	rm -f *.o *.pb.cc *.pb.h $(BINARIES)
+	rm -f *.txt *.o *.pb.cc *.pb.h tsc tsd coordinator synchronizer
+
 
 # The following is to test your system and ensure a smoother experience.
 # They are by no means necessary to actually compile a grpc-enabled software.
@@ -69,10 +81,10 @@ endif
 
 system-check:
 ifneq ($(HAS_VALID_PROTOC),true)
-	@echo "DEPENDENCY ERROR"
+	@echo " DEPENDENCY ERROR"
 	@echo
-	@echo "You don't have protoc 3.0.0 or newer installed in your path."
-	@echo "Please install Google Protocol Buffers 3.0.0 and its compiler."
+	@echo "You don't have protoc 3.0.0 installed in your path."
+	@echo "Please install Google protocol buffers 3.0.0 and its compiler."
 	@echo "You can find it here:"
 	@echo
 	@echo "   https://github.com/google/protobuf/releases/tag/v3.0.0"
@@ -81,13 +93,13 @@ ifneq ($(HAS_VALID_PROTOC),true)
 	@echo
 	-$(PROTOC) --version
 	@echo
-	@false
+	@echo
 endif
 ifneq ($(HAS_PLUGIN),true)
-	@echo "DEPENDENCY ERROR"
+	@echo " DEPENDENCY ERROR"
 	@echo
-	@echo "You don't have the gRPC C++ protobuf plugin installed in your path."
-	@echo "Please install gRPC. You can find it here:"
+	@echo "You don't have the grpc c++ protobuf plugin installed in your path."
+	@echo "Please install grpc. You can find it here:"
 	@echo
 	@echo "   https://github.com/grpc/grpc"
 	@echo
@@ -95,7 +107,7 @@ ifneq ($(HAS_PLUGIN),true)
 	@echo
 	-which $(GRPC_CPP_PLUGIN)
 	@echo
-	@false
+	@echo
 endif
 ifneq ($(SYSTEM_OK),true)
 	@false
