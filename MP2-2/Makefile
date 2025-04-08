@@ -77,7 +77,7 @@ sync: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o synchronizer
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=. $<
 
 clean:
-	rm -f *~ *.o *.pb.cc *.pb.h tsc tsd
+	rm -f *~ *.o *.pb.cc *.pb.h tsc tsd coordinator synchronizer
 
 
 # The following is to test your system and ensure a smoother experience.
