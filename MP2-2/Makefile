@@ -24,20 +24,19 @@ PROTOBUF_UTF8_RANGE_LINK_LIBS = -lutf8_validity
 
 export PKG_CONFIG_PATH = /home/csce438/.local/lib/pkgconfig:/home/csce438/grpc/third_party/re2:/home/csce438/.local/share/pkgconfig/
 
-
 HOST_SYSTEM = $(shell uname | cut -f 1 -d_)
 SYSTEM ?= $(HOST_SYSTEM)
 CXX = g++
 # CPPFLAGS += `pkg-config --cflags protobuf grpc absl_flags absl_flags_parse`
-CPPFLAGS += `pkg-config --cflags protobuf grpc `
-CXXFLAGS += -std=c++17 -g
+CPPFLAGS += -I/usr/local/include -Wnon-virtual-dtor -DNOMINMAX
+CXXFLAGS += -std=c++17
 
 ifeq ($(SYSTEM),Darwin)
 LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
            -pthread\
            -lgrpc++_reflection\
-           -ldl -lrabbitmq -ljsoncpp
+           -ldl -lrabbitmq  -ljsoncpp
 else
 LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
@@ -45,10 +44,11 @@ LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
            -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed\
            -ldl -lglog -lrabbitmq -ljsoncpp
 endif
-
 PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
+
+#PROTOS_PATH = ../../protos
 PROTOS_PATH = .
 
 vpath %.proto $(PROTOS_PATH)
@@ -76,7 +76,7 @@ sync: coordinator.pb.o coordinator.grpc.pb.o sns.pb.o sns.grpc.pb.o synchronizer
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=. $<
 
 clean:
-	rm -f *~ *.o *.pb.cc *.pb.h tsc tsd coordinator synchronizer
+	rm -f *~ *.o *.pb.cc *.pb.h tsc tsd
 
 
 # The following is to test your system and ensure a smoother experience.
