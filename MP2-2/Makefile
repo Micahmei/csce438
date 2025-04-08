@@ -14,7 +14,11 @@ HOST_SYSTEM = $(shell uname | cut -f 1 -d_)
 SYSTEM ?= $(HOST_SYSTEM)
 
 CXX = g++
-CPPFLAGS += -I/usr/local/include -Wnon-virtual-dtor -DNOMINMAX
+CPPFLAGS += -I/usr/local/include \
+            -I/home/csce438/.local/include \
+            -I/home/csce438/grpc/include \
+            -Wnon-virtual-dtor -DNOMINMAX
+
 CXXFLAGS += -std=c++17
 
 ifeq ($(SYSTEM),Darwin)
