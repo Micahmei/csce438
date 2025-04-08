@@ -1,6 +1,6 @@
 syntax = "proto3";
 package csce438;
-
+import "google/protobuf/timestamp.proto";
 service CoordService {
     rpc GetSlave (ID) returns (ServerInfo);
     rpc Heartbeat (ServerInfo) returns (Confirmation);   // Heartbeat from server to coordinator
