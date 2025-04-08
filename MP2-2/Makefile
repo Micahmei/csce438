@@ -22,7 +22,7 @@ PROTOBUF_ABSL_DEPS = absl_absl_check absl_absl_log absl_algorithm absl_base absl
 # tweak the list of libraries to link against to fix the build.
 PROTOBUF_UTF8_RANGE_LINK_LIBS = -lutf8_validity
 
-export PKG_CONFIG_PATH = /home/csce438/.local/lib/pkgconfig:/home/csce438/grpc/third_party/re2:/home/csce438/.local/share/pkgconfig/
+export PKG_CONFIG_PATH = /home/csce438/.local/lib/pkgconfig:/usr/local/lib/pkgconfig:/home/csce438/grpc/third_party/re2:/home/csce438/.local/share/pkgconfig
 
 HOST_SYSTEM = $(shell uname | cut -f 1 -d_)
 SYSTEM ?= $(HOST_SYSTEM)
@@ -32,14 +32,17 @@ CPPFLAGS += -I/usr/local/include -Wnon-virtual-dtor -DNOMINMAX
 CXXFLAGS += -std=c++17
 
 ifeq ($(SYSTEM),Darwin)
-LDFLAGS += -L/home/csce438/.local/lib -L/usr/local/lib `pkg-config --libs --static protobuf grpc++` \
-           -lutf8_validity -lpthread -ldl -lglog -lgrpc++_reflection
+LDFLAGS += -L/usr/local/lib -L/home/csce438/.local/lib/pkgconfig:/usr/local/lib/pkgconfig:/home/csce438/grpc/cmake/build \
+           $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
+           -pthread\
+           -lgrpc++_reflection\
+           -ldl -lrabbitmq  -ljsoncpp
 else
-LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++  `\
+LDFLAGS += -L/usr/local/lib `pkg-config --libs --static protobuf grpc++ absl_flags absl_flags_parse $(PROTOBUF_ABSL_DEPS)`\
            $(PROTOBUF_UTF8_RANGE_LINK_LIBS) \
            -pthread\
            -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed\
-           -ldl -lglog -lrabbitmq -ljsoncpp
+           -ldl -lglog -lrabbitmq  -ljsoncpp
 endif
 PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
