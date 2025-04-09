@@ -55,6 +55,7 @@ class IClient
 {
 public:
   void run();
+  virtual ~IClient() {};
   
 protected:
   /*
