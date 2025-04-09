@@ -649,7 +649,7 @@ void RunServer(std::string coordIP, std::string coordPort, std::string port_no, 
 
   // Initialize RabbitMQ connection
   // SynchronizerRabbitMQ rabbitMQ("localhost", 5672, synchID);
-  SynchronizerRabbitMQ rabbitMQ("localhost", 5672, synchID);
+  SynchronizerRabbitMQ rabbitMQ("rabbitmq_container", 5672, synchID);
 
   std::thread t1(run_synchronizer, coordIP, coordPort, port_no, synchID, std::ref(rabbitMQ));
 
