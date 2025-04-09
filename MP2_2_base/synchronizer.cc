@@ -103,7 +103,7 @@ private:
 
   std::string extractTypeFromQueue(const std::string &queueName)
   {
-    // 例如 "synch1_follower_queue" 提取出 "follower"
+    //  "synch1_follower_queue" get "follower"
     size_t first = queueName.find('_');
     size_t second = queueName.find('_', first + 1);
     if (first != std::string::npos && second != std::string::npos)
@@ -383,7 +383,7 @@ public:
   {
     std::unordered_map<std::string, std::unordered_map<std::string, std::time_t>> all_follow_times;
 
-    // 从每个同步器的消息队列消费 follow_time 数据
+    // get the follow_time in every messagfe queue
     for (int i = 1; i <= total_number_of_registered_synchronizers; i++)
     {
       if (i == synchID)
@@ -397,15 +397,15 @@ public:
         Json::Reader reader;
         if (reader.parse(message, root))
         {
-          // 解析每个同步器的 follow_time 数据
+          // 
           for (const auto &user : root.getMemberNames())
           {
             for (const auto &followee : root[user].getMemberNames())
             {
-              // 获取时间戳
+              // 
               std::time_t timestamp = root[user][followee].asInt64();
 
-              // 将数据添加到 all_follow_times 中
+              // 
               all_follow_times[user][followee] = timestamp;
             }
           }
@@ -413,7 +413,7 @@ public:
       }
     }
 
-    // 将合并后的数据写入文件
+    // 
     for (const auto &user : all_follow_times)
     {
       for (const auto &followee : user.second)
@@ -745,7 +745,7 @@ void run_synchronizer(std::string coordIP, std::string coordPort, std::string po
   while (true)
   {
     // the synchronizers sync files every 5 seconds
-    sleep(2);
+    sleep(5);
 
     grpc::ClientContext context;
     ServerList followerServers;
