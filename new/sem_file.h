@@ -30,7 +30,7 @@ std::string get_sem_name_from_filepath(const std::string &filepath)
     }
 
     // Add a leading '/' to make it a valid sem_name
-    sem_name = "csce438/" + sem_name;
+    sem_name = "/csce438" + sem_name;
 
     return sem_name;
 }
