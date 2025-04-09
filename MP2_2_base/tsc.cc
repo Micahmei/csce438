@@ -63,7 +63,7 @@ private:
   // You can have an instance of the client stub
   // as a member variable.
   std::unique_ptr<SNSService::Stub> stub_;
-  std::unique_ptr<csce438::Coordinator::Stub> coordinator_stub;
+  std::unique_ptr<csce438::CoordService::Stub> coordinator_stub;
 
   IReply Login();
   IReply List();
@@ -95,7 +95,7 @@ int Client::connectTo()
 
   // connect to coordinator first
   auto coordinator_channel = grpc::CreateCustomChannel(cord_ip + ":" + cord_port, grpc::InsecureChannelCredentials(), ch_args);
-  coordinator_stub = csce438::Coordinator::NewStub(coordinator_channel);
+  coordinator_stub = csce438::CoordService::NewStub(coordinator_channel);
 
   if (!coordinator_stub)
   {
